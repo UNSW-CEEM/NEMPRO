@@ -166,7 +166,7 @@ class DispatchPlanner:
                                                      max_delta=self._get_market_fcas_capacity(region, service),
                                                      steps=self.demand_delta_steps)
 
-        self.nominal_price_forecast[target_column_name] = price_traces
+        self.nominal_price_forecast[target_column_name] = price_traces.copy()
 
         for col in price_traces.columns:
             if col != 'interval':
