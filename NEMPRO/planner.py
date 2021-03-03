@@ -424,26 +424,26 @@ class DispatchPlanner:
                            (self.unit_capacity[unit_name] - self.unit_min_loading[unit_name])) <= 0.0
 
     def add_ramp_rates(self, unit_name, ramp_up_rate, ramp_down_rate):
-        ramp_up_rate = self._mw_per_minute_to_mw_per_interval(ramp_up_rate)
-        ramp_down_rate = self._mw_per_minute_to_mw_per_interval(ramp_down_rate)
+        ramp_up_rate = self._mw_per_hour_to_mw_per_interval(ramp_up_rate)
+        ramp_down_rate = self._mw_per_hour_to_mw_per_interval(ramp_down_rate)
         self._add_ramping_constraints(unit_name, ramp_up_rate, ramp_down_rate)
 
     def _add_ramping_constraints(self, unit_name, max_ramp_up, max_ramp_down):
-        min_loading = self.unit_min_loading
+        min_loading = self.unit_min_loading[unit_name]
         for i in range(0, self.planning_horizon):
             if i == 0:
-                self.model += (self.unit_commitment_vars[unit_name]['unit_to_market'][i] -
+                self.model += (self.unit_out_flow_variables[unit_name][i]['unit_to_market'] -
                                max(0, self.unit_initial_mw[unit_name] - min_loading) -
                                max_ramp_up <= 0)
                 self.model += (max(0, self.unit_initial_mw[unit_name] - min_loading) -
-                               self.unit_commitment_vars[unit_name]['unit_to_market'][i] -
+                               self.unit_out_flow_variables[unit_name][i]['unit_to_market'] -
                                max_ramp_down <= 0)
             else:
-                self.model += (self.unit_commitment_vars[unit_name]['unit_to_market'][i] -
-                               self.unit_commitment_vars[unit_name]['unit_to_market'][i - 1] -
+                self.model += (self.unit_out_flow_variables[unit_name][i]['unit_to_market'] -
+                               self.unit_out_flow_variables[unit_name][i - 1]['unit_to_market'] -
                                max_ramp_up <= 0)
-                self.model += (self.unit_commitment_vars[unit_name]['unit_to_market'][i - 1] -
-                               self.unit_commitment_vars[unit_name]['unit_to_market'][i] -
+                self.model += (self.unit_out_flow_variables[unit_name][i - 1]['unit_to_market'] -
+                               self.unit_out_flow_variables[unit_name][i]['unit_to_market'] -
                                max_ramp_down <= 0)
 
     def add_startup_costs(self, unit_name, hot_start_cost, cold_start_cost, time_to_go_cold):
@@ -927,6 +927,16 @@ class DispatchPlanner:
             trace['interval'].apply(lambda x: self.model.var_by_name(str("net_dispatch_{}_{}".format(market, x))).x,
                                     self.model)
         return trace
+
+    def get_fcas_dispatch(self, unit_name):
+        trace = self.forward_data.loc[:, ['interval']]
+        for service in self.expected_service:
+            if service in self.unit_output_fcas_variables[unit_name] and service != 'energy':
+                trace[service] = \
+                    trace['interval'].apply(
+                        lambda x: self.unit_output_fcas_variables[unit_name][service][x].x,)
+        return trace
+
 
 
 def _create_dispatch_dependent_price_traces(price_forecast, self_dispatch_forecast, capacity_min, capacity_max,

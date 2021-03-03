@@ -1,27 +1,34 @@
 from nemosis import data_fetch_methods
 import pandas as pd
 
+aemo_price_names = {'energy': 'RRP',
+                    'raise_regulation': 'RAISEREGRRP',
+                    'raise_6_seconds': 'RAISE6SECRRP',
+                    'raise_60_seconds': 'RAISE60SECRRP',
+                    'raise_5_minutes': 'RAISE5MINRRP'}
 
 def get_regional_prices(start_time, end_time, raw_data_cache):
 
     dispatch_data = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCHPRICE', raw_data_cache,
                                                              select_columns=['SETTLEMENTDATE', 'INTERVENTION',
-                                                                             'REGIONID', 'RRP'])
+                                                                             'REGIONID', 'RRP', 'RAISEREGRRP',
+                                                                             'RAISE6SECRRP', 'RAISE60SECRRP',
+                                                                             'RAISE5MINRRP'])
 
     dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == '0']
+    data = pd.DataFrame()
+    for name, aemo_name in aemo_price_names.items():
+        dispatch_data[aemo_name] = pd.to_numeric(dispatch_data[aemo_name])
+        data_temp = dispatch_data.pivot_table(values=aemo_name, index='SETTLEMENTDATE', columns='REGIONID')
+        data_temp = data_temp.reset_index().fillna('0.0')
+        data_temp = data_temp.rename(columns={'QLD1': 'qld', 'NSW1': 'nsw', 'VIC1': 'vic', 'SA1': 'sa', 'TAS1': 'tas'})
+        data_temp.columns = [col + '-' + name if col != 'SETTLEMENTDATE' else col for col in data_temp.columns]
+        if data.empty:
+            data = data_temp
+        else:
+            data = pd.merge(data, data_temp, on=['SETTLEMENTDATE'])
 
-    dispatch_data['RRP'] = pd.to_numeric(dispatch_data['RRP'])
-
-    dispatch_data = dispatch_data.pivot_table(values='RRP', index='SETTLEMENTDATE', columns='REGIONID')
-
-    dispatch_data = dispatch_data.reset_index().fillna('0.0')
-
-    dispatch_data = dispatch_data.rename(columns={'QLD1': 'qld', 'NSW1': 'nsw', 'VIC1': 'vic', 'SA1': 'sa',
-                                                  'TAS1': 'tas'})
-
-    dispatch_data.columns = [col + '-energy' if col != 'SETTLEMENTDATE' else col for col in dispatch_data.columns]
-
-    return dispatch_data
+    return data
 
 
 def get_regional_demand(start_time, end_time, raw_data_cache):
@@ -49,8 +56,7 @@ def get_regional_demand(start_time, end_time, raw_data_cache):
 def get_duid_techs(raw_data_cache):
 
     cols = ['DUID', 'Region', 'Fuel Source - Descriptor', 'Technology Type - Descriptor']
-    tech_data = data_fetch_methods.static_table_xl('', '', 'Generators and Scheduled Loads', raw_data_cache,
-                                                   select_columns=cols)
+    tech_data = data_fetch_methods.static_table_xl('Generators and Scheduled Loads', raw_data_cache, select_columns=cols)
 
     def tech_classifier(fuel_source, technology_type):
         category = fuel_source
