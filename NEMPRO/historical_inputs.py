@@ -1,11 +1,11 @@
-from nemosis import data_fetch_methods
+from nemosis import data_fetch_methods, defaults
 import pandas as pd
 
 aemo_price_names = {'energy': 'RRP',
                     'raise_regulation': 'RAISEREGRRP',
-                    'raise_6_seconds': 'RAISE6SECRRP',
-                    'raise_60_seconds': 'RAISE60SECRRP',
-                    'raise_5_minutes': 'RAISE5MINRRP'}
+                    'raise_6_second': 'RAISE6SECRRP',
+                    'raise_60_second': 'RAISE60SECRRP',
+                    'raise_5_minute': 'RAISE5MINRRP'}
 
 def get_regional_prices(start_time, end_time, raw_data_cache):
 
@@ -111,17 +111,41 @@ def get_tech_operating_capacities(start_time, end_time, raw_data_cache):
     return dispatch_data
 
 
-def get_fleet_dispatch(start_time, end_time, fleet_units, raw_data_cache):
+def get_fleet_dispatch(start_time, end_time, fleet_units, region, raw_data_cache):
 
     dispatch_data = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCHLOAD', raw_data_cache,
                                                              select_columns=['DUID', 'SETTLEMENTDATE', 'TOTALCLEARED',
-                                                                             'INTERVENTION'])
+                                                                             'INTERVENTION', 'RAISEREG', 'RAISE6SEC',
+                                                                             'RAISE60SEC', 'RAISE5MIN'])
     dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == '0']
 
     dispatch_data = dispatch_data[dispatch_data['DUID'].isin(fleet_units)]
 
-    dispatch_data = dispatch_data.groupby('SETTLEMENTDATE', as_index=False).aggregate({'TOTALCLEARED': 'sum'})
+    dispatch_data['TOTALCLEARED'] = pd.to_numeric(dispatch_data['TOTALCLEARED'])
+    dispatch_data['RAISEREG'] = pd.to_numeric(dispatch_data['RAISEREG'])
+    dispatch_data['RAISE6SEC'] = pd.to_numeric(dispatch_data['RAISE6SEC'])
+    dispatch_data['RAISE60SEC'] = pd.to_numeric(dispatch_data['RAISE60SEC'])
+    dispatch_data['RAISE5MIN'] = pd.to_numeric(dispatch_data['RAISE5MIN'])
 
-    dispatch_data = dispatch_data.rename(columns={'TOTALCLEARED': 'fleet_dispatch'})
+    dispatch_data = dispatch_data.groupby('SETTLEMENTDATE', as_index=False).aggregate(
+        {'TOTALCLEARED': 'sum', 'RAISEREG': 'sum', 'RAISE6SEC': 'sum', 'RAISE60SEC': 'sum', 'RAISE5MIN': 'sum'})
+
+    aemo_dispatch_names = {'TOTALCLEARED': region + '-energy-fleet-dispatch',
+                           'RAISEREG': region + '-raise_regulation-fleet-dispatch',
+                           'RAISE6SEC': region + '-raise_6_second-fleet-dispatch',
+                           'RAISE60SEC': region + '-raise_60_second-fleet-dispatch',
+                           'RAISE5MIN': region + '-raise_5_minute-fleet-dispatch'}
+
+    dispatch_data = dispatch_data.rename(columns=aemo_dispatch_names)
 
     return dispatch_data
+
+
+def get_unit_dispatch(start_time, end_time, unit, raw_data_cache):
+    dispatch_data = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCHLOAD', raw_data_cache,
+                                                             select_columns=['DUID', 'SETTLEMENTDATE', 'INTERVENTION',
+                                                                             'INITIALMW'])
+    dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == '0']
+    dispatch_data = dispatch_data[dispatch_data['DUID'] == unit]
+    initial_mw = dispatch_data['INITIALMW'].iloc[0]
+    return float(initial_mw)

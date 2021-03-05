@@ -17,7 +17,7 @@ class DispatchPlanner:
         self.units = []
         self.unit_energy_market_mapping = {}
         self.unit_fcas_market_mapping = {}
-        self.model = Model(solver_name='CBC', sense='MAX')
+        self.model = Model(solver_name='GUROBI', sense='MAX')
         self.unit_in_flow_variables = {}
         self.unit_out_flow_variables = {}
         self.units_with_storage = []
@@ -38,8 +38,8 @@ class DispatchPlanner:
         self.demand_delta_steps = demand_delta_steps
         self.expected_regions = ['qld', 'nsw', 'vic', 'sa', 'tas', 'mainland']
         self.expected_service = ['energy',
-                                 'raise_5_min', 'raise_60_second', 'raise_6_second', 'raise_regulation',
-                                 'lower_5_min', 'lower_60_second', 'lower_6_second', 'lower_regulation']
+                                 'raise_5_minute', 'raise_60_second', 'raise_6_second', 'raise_regulation',
+                                 'lower_5_minute', 'lower_60_second', 'lower_6_second', 'lower_regulation']
         self.unit_commitment_vars = {}
         self.unit_capacity = {}
         self.unit_min_loading = {}
@@ -321,28 +321,12 @@ class DispatchPlanner:
         for market in self.regional_markets:
             region, service = market.split('-')
             for i in range(0, self.planning_horizon):
-                if service == 'energy':
-                    net_vars = []
-                    for unit in self.units:
-                        if service in unit.service_region_mapping and unit.service_region_mapping[service] == region:
-                            net_vars.append(unit.net_dispatch_vars[i])
-                    self.model += xsum([self.market_net_dispatch_variables[region][service][i]] +
-                                       [-1 * var for var in net_vars]) == 0.0
-                else:
-                    output_fcas_vars = []
-                    for unit in self.units:
-                        if service in unit.service_region_mapping and unit.service_region_mapping[service] == region:
-                            if service in unit.output_fcas_variables:
-                                output_fcas_vars.append(unit.output_fcas_variables[service][i])
-                    input_fcas_vars = []
-                    for unit in self.units:
-                        if service in unit.service_region_mapping and unit.service_region_mapping[service] == region:
-                            if service in unit.input_fcas_variables:
-                                input_fcas_vars.append(unit.input_fcas_variables[service][i])
-
-                    self.model += xsum([self.market_net_dispatch_variables[region][service][i]] +
-                                       [-1 * var for var in input_fcas_vars] +
-                                       [-1 * var for var in output_fcas_vars]) == 0.0
+                net_vars = []
+                for unit in self.units:
+                    if service in unit.service_region_mapping and unit.service_region_mapping[service] == region:
+                        net_vars.append(unit.net_dispatch_vars[service][i])
+                self.model += xsum([self.market_net_dispatch_variables[region][service][i]] +
+                                   [-1 * var for var in net_vars]) == 0.0
 
     def _create_constraints_to_balance_unit_nodes(self):
         for unit in self.units:

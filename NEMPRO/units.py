@@ -39,16 +39,16 @@ class GenericUnit:
         self.unit_storage_level_variables = {}
 
     def _set_time_step(self, planner, optimisation_time_step):
-        if (optimisation_time_step != 'use_planner_time_step' or
+        if (optimisation_time_step != 'use_planner_time_step' and not
                 type(optimisation_time_step) is int):
             raise ValueError("optimisation_time_step should be 'use_planner_time_step' or type int.")
 
         if optimisation_time_step == 'use_planner_time_step':
             self.time_step = planner.get_time_step()
         else:
-            if (planner.get_time_step() % optimisation_time_step) != 0:
+            if (optimisation_time_step % planner.get_time_step()) != 0:
                 raise ValueError("Planner time step must be multiple of unit time step.")
-            if (planner.planning_horizon_minutes % optimisation_time_step) != 0:
+            if (self.planning_horizon_minutes % optimisation_time_step) != 0:
                 raise ValueError("Planning horizon must be multiple of unit time step.")
 
             self.time_step = optimisation_time_step
@@ -117,7 +117,7 @@ class GenericUnit:
         self._add_generation_limit_constraint()
 
     def _mw_per_minute_to_mw_per_interval(self, mw_per_minute):
-        return mw_per_minute * (self.time_step / 60)
+        return mw_per_minute * self.time_step
 
     def _create_state_variables(self):
         for i in range(0, self.planning_horizon_in_intervals):
@@ -558,41 +558,72 @@ class GenericUnit:
                 self.model += xsum(in_flow_vars + [-1 * var for var in out_flow_vars]) == 0.0
 
     def create_net_output_vars(self):
-        for i in range(0, self.planner.get_horizon_in_intervals()):
-            self.net_dispatch_vars[i] = self.model.add_var(lb=-INF,  ub=INF)
-            lhs = [self.net_dispatch_vars[i]]
-            rate = self.time_step / self.planner.get_time_step()
-            if i % rate == 0:
-                if 'state' in self.unit_commitment_vars:
-                    lhs.append(self.unit_commitment_vars['state'][i] * self.min_loading * -1)
-                if 'unit_to_market' in self.out_flow_vars:
-                    lhs.append(self.out_flow_vars['unit_to_market'][i] * -1)
-                if 'market_to_unit' in self.in_flow_vars:
-                    lhs.append(self.in_flow_vars['market_to_unit'][i])
-                self.model += xsum(lhs) == 0.0
-            else:
-                previous_unit_interval = math.floor(i/self.time_step)
-                previous_interval_weight = (rate - (i % rate)) / rate
-                next_unit_interval = math.ceil(i / rate)
-                next_interval_weight = (i % rate) / rate
-                if 'state' in self.unit_commitment_vars:
-                    lhs.append(self.unit_commitment_vars['state'][previous_unit_interval] * self.min_loading * -1
-                               * previous_interval_weight)
-                    lhs.append(self.unit_commitment_vars['state'][next_unit_interval] * self.min_loading * -1
-                               * next_interval_weight)
-                if 'unit_to_market' in self.out_flow_vars:
-                    lhs.append(self.out_flow_vars['unit_to_market'][previous_unit_interval] * -1 *
-                               previous_interval_weight)
-                    lhs.append(self.out_flow_vars['unit_to_market'][next_unit_interval] * -1 *
-                               next_interval_weight)
-                if 'market_to_unit' in self.in_flow_vars:
-                    lhs.append(self.in_flow_vars['market_to_unit'][previous_unit_interval] * previous_interval_weight)
-                    lhs.append(self.in_flow_vars['market_to_unit'][next_unit_interval] * next_interval_weight)
-                self.model += xsum(lhs) == 0.0
+        for service in self.service_region_mapping.keys():
+            self.net_dispatch_vars[service] = {}
+            for i in range(0, self.planner.get_horizon_in_intervals()):
+                self.net_dispatch_vars[service][i] = self.model.add_var(lb=-INF,  ub=INF)
+                lhs = [self.net_dispatch_vars[service][i]]
+                rate = self.time_step / self.planner.get_time_step()
+                if (i+1) % rate == 0:
+                    if service == 'energy':
+                        unit_index = int(i/rate)
+                        if 'state' in self.unit_commitment_vars:
+                            lhs.append(self.unit_commitment_vars['state'][unit_index] * self.min_loading * -1)
+                        if 'unit_to_market' in self.out_flow_vars:
+                            lhs.append(self.out_flow_vars['unit_to_market'][unit_index] * -1)
+                        if 'market_to_unit' in self.in_flow_vars:
+                            lhs.append(self.in_flow_vars['market_to_unit'][unit_index])
+                        self.model += xsum(lhs) == 0.0
+                    else:
+                        if service in self.output_fcas_variables:
+                            lhs.append(self.output_fcas_variables[service][unit_index] * -1)
+                        if service in self.input_fcas_variables:
+                            lhs.append(self.input_fcas_variables[service][unit_index] * -1)
+                        if len(lhs) > 1:
+                            self.model += xsum(lhs) == 0.0
+                else:
+                    next_unit_interval = math.ceil((i + 1) / rate) - 1
+                    next_interval_weight = ((i + 1) % rate) / rate
+                    previous_unit_interval = next_unit_interval - 1
+                    previous_interval_weight = 1 - next_interval_weight
+                    if service == 'energy':
+                        if i < rate:
+                            lhs.append(self.initial_mw * -1 * previous_interval_weight)
+                            if 'state' in self.unit_commitment_vars:
+                                lhs.append(self.unit_commitment_vars['state'][next_unit_interval] * self.min_loading * -1
+                                           * next_interval_weight)
+                            if 'unit_to_market' in self.out_flow_vars:
+                                lhs.append(self.out_flow_vars['unit_to_market'][next_unit_interval] * -1 *
+                                           next_interval_weight)
+                            if 'market_to_unit' in self.in_flow_vars:
+                                lhs.append(self.in_flow_vars['market_to_unit'][next_unit_interval] * next_interval_weight)
+                            self.model += xsum(lhs) == 0.0
+                        else:
+                            if 'state' in self.unit_commitment_vars:
+                                lhs.append(self.unit_commitment_vars['state'][previous_unit_interval] * self.min_loading * -1
+                                           * previous_interval_weight)
+                                lhs.append(self.unit_commitment_vars['state'][next_unit_interval] * self.min_loading * -1
+                                           * next_interval_weight)
+                            if 'unit_to_market' in self.out_flow_vars:
+                                lhs.append(self.out_flow_vars['unit_to_market'][previous_unit_interval] * -1 *
+                                           previous_interval_weight)
+                                lhs.append(self.out_flow_vars['unit_to_market'][next_unit_interval] * -1 *
+                                           next_interval_weight)
+                            if 'market_to_unit' in self.in_flow_vars:
+                                lhs.append(self.in_flow_vars['market_to_unit'][previous_unit_interval] * previous_interval_weight)
+                                lhs.append(self.in_flow_vars['market_to_unit'][next_unit_interval] * next_interval_weight)
+                            self.model += xsum(lhs) == 0.0
+                    else:
+                        if service in self.output_fcas_variables:
+                            lhs.append(self.output_fcas_variables[service][next_unit_interval] * -1)
+                        if service in self.input_fcas_variables:
+                            lhs.append(self.input_fcas_variables[service][next_unit_interval] * -1)
+                        if len(lhs) > 1:
+                            self.model += xsum(lhs) == 0.0
 
-    def get_dispatch(self):
+    def get_dispatch(self, service='energy'):
         energy_flows = self.planner.get_template_trace()
-        energy_flows['net_dispatch'] = energy_flows['interval'].apply(lambda x: self.net_dispatch_vars[x].x)
+        energy_flows['net_dispatch'] = energy_flows['interval'].apply(lambda x: self.net_dispatch_vars[service][x].x)
         return energy_flows
 
     def get_unit_energy_flows(self):
