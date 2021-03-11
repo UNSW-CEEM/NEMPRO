@@ -66,43 +66,42 @@ def get_duid_techs(raw_data_cache):
             category = 'OCGT'
         elif technology_type == 'Combined Cycle Gas Turbine (CCGT)':
             category = 'CCGT'
-        elif technology_type == 'Battery':
-            category = 'Battery'
-        elif technology_type == 'Run of River':
-            category = 'Hydro'
+        elif technology_type == 'Run of River' or fuel_source == 'Solar' or fuel_source == 'Wind' or fuel_source == 'Solar ':
+            category = 'ZEROSRMC'
         elif technology_type == 'Spark Ignition Reciprocating Engine':
             category = 'Engine'
         elif technology_type == 'Compression Reciprocating Engine':
             category = 'Engine'
         elif technology_type == 'Steam Sub-Critical' and (fuel_source == 'Natural Gas / Fuel Oil' or fuel_source == 'Natural Gas'):
             category = 'Gas Thermal'
-        elif technology_type == 'Pump Storage':
-            category = 'Hydro'
+        elif technology_type == 'Pump Storage' or technology_type == 'Battery':
+            category = 'Storage'
         return category
 
     tech_data['TECH'] = tech_data.apply(lambda x: tech_classifier(x['Fuel Source - Descriptor'],
-                                                                      x['Technology Type - Descriptor']),
+                                                                  x['Technology Type - Descriptor']),
                                             axis=1)
 
     return tech_data.loc[:, ['DUID', 'Region', 'TECH']]
 
 
 def get_tech_operating_capacities(start_time, end_time, raw_data_cache):
+    tech_data = get_duid_techs(raw_data_cache)
+
     dispatch_data = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCHLOAD', raw_data_cache,
                                                              select_columns=['DUID', 'SETTLEMENTDATE',
                                                                              'INTERVENTION', 'AVAILABILITY'])
 
     dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == '0']
 
-    tech_data = get_duid_techs(raw_data_cache)
 
     dispatch_data = pd.merge(dispatch_data, tech_data, on='DUID')
 
     dispatch_data['AVAILABILITY'] = pd.to_numeric(dispatch_data['AVAILABILITY'])
 
-    dispatch_data = dispatch_data.groupby(['TECH', 'Region', 'SETTLEMENTDATE'], as_index=False).aggregate({'AVAILABILITY': 'sum'})
+    dispatch_data = dispatch_data.groupby(['TECH', 'SETTLEMENTDATE'], as_index=False).aggregate({'AVAILABILITY': 'sum'})
 
-    dispatch_data['tech_region'] = dispatch_data['TECH'] + '-' + dispatch_data['Region'] + '-capacity'
+    dispatch_data['tech_region'] = dispatch_data['TECH'] + '-capacity'
 
     dispatch_data = dispatch_data.pivot_table(values='AVAILABILITY', index='SETTLEMENTDATE', columns='tech_region')
 

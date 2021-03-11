@@ -203,7 +203,7 @@ class DispatchPlanner:
     def _get_market_fcas_capacity(self, region, service):
         capacity = 0.0
         for unit in self.units:
-            if unit.service_region_mapping[service] == region:
+            if service in unit.service_region_mapping and unit.service_region_mapping[service] == region:
                 if service in unit.input_fcas_variables:
                     capacity += unit.input_fcas_variables[service][0].ub
                 if service in unit.output_fcas_variables:
@@ -461,7 +461,7 @@ def _process_row(price_forecast, self_dispatch_forecast, capacity_min, capacity_
 
 
 class Forecaster:
-    def __init__(self, tabu_child_nodes=['hour', 'weekday', 'month'],
+    def __init__(self, tabu_child_nodes=['hour', 'dayofweak', 'dayofyear'],
                  tabu_edges=[('constraint', 'demand'), ('demand', 'demand'),
                              ('constraint', 'constraint'), ('capacity', 'capacity'),
                              ('capacity', 'demand'), ('demand', 'capacity')]):
