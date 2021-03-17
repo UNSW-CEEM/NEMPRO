@@ -527,7 +527,7 @@ class Forecaster:
             forward_data[region + '-demand'] = forward_data['old_demand'] - delta
             X = forward_data.loc[:, self.features]
             Y = self.regressor.predict(X)
-            prediction[delta] = Y
+            prediction[delta] = forward_data[region + '-demand']  #Y
         return prediction
 
     def base_forecast(self, forward_data):
