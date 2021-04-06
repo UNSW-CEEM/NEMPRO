@@ -2,12 +2,12 @@ import pandas as pd
 import numpy as np
 import math
 from itertools import product
-from mip import Model, xsum, maximize, INF, BINARY
+from mip import Model, xsum, maximize, INF, BINARY, minimize
 from causalnex.structure.pytorch import DAGRegressor
 
 
 class DispatchPlanner:
-    def __init__(self, dispatch_interval, forward_data, historical_data=None, train_pct=0.1, demand_delta_steps=10):
+    def __init__(self, dispatch_interval, forward_data, historical_data=None, train_pct=0.01, demand_delta_steps=10):
         self.dispatch_interval = dispatch_interval
         self.historical_data = historical_data
         self.forward_data = forward_data
@@ -58,6 +58,100 @@ class DispatchPlanner:
 
     def get_time_step(self):
         return self.dispatch_interval
+
+    def add_demand_smoothing_objective_function(self, region, service):
+        """Smooths on a daily basis by minimising peaks and maximising troughs. Assumes interval 0 is first interval of
+        the day.
+        """
+
+        market_name = region + '-' + service
+        self.regional_markets.append(market_name)
+
+        if region not in self.market_net_dispatch_variables:
+            self.market_net_dispatch_variables[region] = {}
+
+        self.market_net_dispatch_variables[region][service] = {}
+
+        for i in range(0, self.planning_horizon):
+            self.market_net_dispatch_variables[region][service][i] = {}
+
+            dispatch_var_name = "net_dispatch_{}_{}".format(market_name, i)
+            self.market_net_dispatch_variables[region][service][i] = \
+                self.model.add_var(name=dispatch_var_name, lb=-1.0 * INF, ub=INF)
+
+        intervals_per_day = int(60 * 24 / self.get_time_step())
+
+        number_of_days = math.ceil(self.get_horizon_in_intervals() / intervals_per_day)
+
+        demand_series = self.forward_data.set_index('interval')[region + '-demand']
+
+        self.market_peak_demand_cost_vars = {}
+        self.market_min_demand_cost_vars = {}
+
+        for day in range(0, number_of_days):
+            day_start_interval = day * intervals_per_day
+            day_end_interval = min((day + 1) * intervals_per_day, self.forward_data['interval'].max() + 1)
+            day_demand_series = demand_series.loc[day_start_interval:day_end_interval]
+            day_average_demand = day_demand_series.mean()
+            self.market_peak_demand_cost_vars[day] = self.model.add_var(lb=0, ub=INF, obj=-1)
+            self.market_min_demand_cost_vars[day] = self.model.add_var(lb=0, ub=INF, obj=-1)
+
+            for i in range(day_start_interval, day_end_interval):
+                interval_demand = demand_series.loc[i]
+                dispatch = self.market_net_dispatch_variables[region][service][i]
+                self.model += (interval_demand - dispatch) - day_average_demand <= self.market_peak_demand_cost_vars[day]
+                self.model += day_average_demand - (interval_demand - dispatch) <= self.market_min_demand_cost_vars[day]
+                if interval_demand > day_average_demand:
+                    self.model += dispatch >= 0
+                if interval_demand < day_average_demand:
+                    self.model += dispatch <= 0
+
+    def add_demand_smoothing_objective_function_v2(self, region, service):
+        """Smooths on a daily basis by minimising peaks and maximising troughs. Assumes interval 0 is first interval of
+        the day.
+        """
+
+        market_name = region + '-' + service
+        self.regional_markets.append(market_name)
+
+        if region not in self.market_net_dispatch_variables:
+            self.market_net_dispatch_variables[region] = {}
+
+        self.market_net_dispatch_variables[region][service] = {}
+
+        for i in range(0, self.planning_horizon):
+            self.market_net_dispatch_variables[region][service][i] = {}
+
+            dispatch_var_name = "net_dispatch_{}_{}".format(market_name, i)
+            self.market_net_dispatch_variables[region][service][i] = \
+                self.model.add_var(name=dispatch_var_name, lb=-1.0 * INF, ub=INF)
+
+        intervals_per_day = int(60 * 24 / self.get_time_step())
+
+        number_of_days = math.ceil(self.get_horizon_in_intervals() / intervals_per_day)
+
+        demand_series = self.forward_data.set_index('interval')[region + '-demand']
+
+        self.market_peak_demand_cost_vars = {}
+        self.market_min_demand_cost_vars = {}
+
+        for day in range(0, number_of_days):
+            day_start_interval = day * intervals_per_day
+            day_end_interval = min((day + 1) * intervals_per_day, self.forward_data['interval'].max() + 1)
+            self.market_peak_demand_cost_vars[day] = self.model.add_var(lb=0, ub=INF, obj=-1)
+            self.market_min_demand_cost_vars[day] = self.model.add_var(lb=0, ub=INF, obj=-1)
+
+            for i in range(day_start_interval, day_end_interval):
+                day_demand_series = demand_series.loc[max(i - intervals_per_day / 2, 0):min(i + intervals_per_day / 2 + 1, self.planning_horizon)]
+                day_average_demand = day_demand_series.mean()
+                interval_demand = demand_series.loc[i]
+                dispatch = self.market_net_dispatch_variables[region][service][i]
+                self.model += (interval_demand - dispatch) - day_average_demand <= self.market_peak_demand_cost_vars[day]
+                self.model += day_average_demand - (interval_demand - dispatch) <= self.market_min_demand_cost_vars[day]
+                if interval_demand > day_average_demand:
+                    self.model += dispatch >= 0
+                if interval_demand < day_average_demand:
+                    self.model += dispatch <= 0
 
     def add_regional_market(self, region, service):
         if self.historical_data is not None:
@@ -228,7 +322,7 @@ class DispatchPlanner:
         cols_to_drop = [col for col in cols_to_drop if col in forward_data.columns]
         forward_data = forward_data.drop(columns=cols_to_drop)
 
-        forecaster.train(data=historical_data, train_sample_fraction=0.1, target_col=target_column_name)
+        forecaster.train(data=historical_data, train_sample_fraction=self.train_pct, target_col=target_column_name)
         forward_dispatch = forecaster.base_forecast(forward_data=forward_data)
 
         return forward_dispatch
@@ -461,7 +555,7 @@ def _process_row(price_forecast, self_dispatch_forecast, capacity_min, capacity_
 
 
 class Forecaster:
-    def __init__(self, tabu_child_nodes=['hour', 'dayofweak', 'dayofyear'],
+    def __init__(self, tabu_child_nodes=['hour', 'dayofweek', 'dayofyear'],
                  tabu_edges=[('constraint', 'demand'), ('demand', 'demand'),
                              ('constraint', 'constraint'), ('capacity', 'capacity'),
                              ('capacity', 'demand'), ('demand', 'capacity')]):
@@ -508,7 +602,7 @@ class Forecaster:
                                       alpha=0.0,
                                       beta=0.5,
                                       fit_intercept=True,
-                                      hidden_layer_units=[5],
+                                      hidden_layer_units=[16, 16, 16],
                                       standardize=True,
                                       tabu_child_nodes=tabu_child_nodes,
                                       tabu_edges=self._expand_tabu_edges(self.features))
@@ -527,7 +621,7 @@ class Forecaster:
             forward_data[region + '-demand'] = forward_data['old_demand'] - delta
             X = forward_data.loc[:, self.features]
             Y = self.regressor.predict(X)
-            prediction[delta] = forward_data[region + '-demand']  #Y
+            prediction[delta] = Y
         return prediction
 
     def base_forecast(self, forward_data):

@@ -12,6 +12,7 @@ def get(start_time, end_time, raw_data_cache):
     scada_data['SCADAVALUE'] = pd.to_numeric(scada_data['SCADAVALUE'])
     scada_data = scada_data.groupby(['SETTLEMENTDATE', 'Region'], as_index=False).agg({'SCADAVALUE': 'sum'})
     regional_demand = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCHREGIONSUM', raw_data_cache)
+    regional_demand = regional_demand[regional_demand['INTERVENTION'] == '0']
     regional_demand = pd.merge(regional_demand, scada_data, left_on=['SETTLEMENTDATE', 'REGIONID'],
                                right_on=['SETTLEMENTDATE', 'Region'])
     regional_demand['TOTALDEMAND'] = pd.to_numeric(regional_demand['TOTALDEMAND'])
