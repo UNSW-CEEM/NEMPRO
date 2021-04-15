@@ -53,6 +53,35 @@ def get_regional_demand(start_time, end_time, raw_data_cache):
     return dispatch_data
 
 
+def get_residual_demand(start_time, end_time, raw_data_cache):
+    cols = ['DUID', 'Region', 'Fuel Source - Descriptor']
+    tech_data = data_fetch_methods.static_table_xl('Generators and Scheduled Loads', raw_data_cache, select_columns=cols)
+    zero_srmc_techs = ['Wind', 'Solar', 'Solar ']
+    tech_data = tech_data[tech_data['Fuel Source - Descriptor'].isin(zero_srmc_techs)]
+    scada_data = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCH_UNIT_SCADA', raw_data_cache)
+    scada_data = pd.merge(scada_data, tech_data, on='DUID')
+    scada_data['SCADAVALUE'] = pd.to_numeric(scada_data['SCADAVALUE'])
+    scada_data = scada_data.groupby(['SETTLEMENTDATE', 'Region'], as_index=False).agg({'SCADAVALUE': 'sum'})
+    regional_demand = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCHREGIONSUM', raw_data_cache)
+    regional_demand = regional_demand[regional_demand['INTERVENTION'] == '0']
+    regional_demand = pd.merge(regional_demand, scada_data, left_on=['SETTLEMENTDATE', 'REGIONID'],
+                               right_on=['SETTLEMENTDATE', 'Region'])
+    regional_demand['TOTALDEMAND'] = pd.to_numeric(regional_demand['TOTALDEMAND'])
+    regional_demand['RESIDUALDEMAND'] = regional_demand['TOTALDEMAND'] - regional_demand['SCADAVALUE']
+    regional_demand = regional_demand.loc[:, ['SETTLEMENTDATE', 'REGIONID', 'RESIDUALDEMAND']]
+
+    regional_demand = regional_demand.pivot_table(values='RESIDUALDEMAND', index='SETTLEMENTDATE', columns='REGIONID')
+
+    regional_demand = regional_demand.reset_index().fillna('0.0')
+
+    regional_demand = regional_demand.rename(columns={'QLD1': 'qld', 'NSW1': 'nsw', 'VIC1': 'vic', 'SA1': 'sa',
+                                                      'TAS1': 'tas'})
+
+    regional_demand.columns = [col + '-demand' if col != 'SETTLEMENTDATE' else col for col in regional_demand.columns]
+
+    return regional_demand
+
+
 def get_duid_techs(raw_data_cache):
 
     cols = ['DUID', 'Region', 'Fuel Source - Descriptor', 'Technology Type - Descriptor']

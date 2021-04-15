@@ -599,19 +599,40 @@ class Forecaster:
                          if col not in [target_col, 'interval'] and 'fleet-dispatch' not in col]
         tabu_child_nodes = [col for col in self.generic_tabu_edges if col in self.features]
         self.regressor = DAGRegressor(threshold=0.0,
-                                      alpha=0.0,
+                                      alpha=0.0001,
                                       beta=0.5,
                                       fit_intercept=True,
-                                      hidden_layer_units=[16, 16, 16],
+                                      hidden_layer_units=[5],
                                       standardize=True,
                                       tabu_child_nodes=tabu_child_nodes,
                                       tabu_edges=self._expand_tabu_edges(self.features))
         n_rows = len(data.index)
         sample_size = int(n_rows * train_sample_fraction)
-        train = data.sample(sample_size, random_state=1)
+        #train = data.sample(n=500, replace=True)
+        train = self._sample_by_most_recent(data, target_col)
         train = train.reset_index(drop=True)
         X, y = train.loc[:, self.features], np.asarray(train[target_col])
         self.regressor.fit(X, y)
+
+    def _sample(self, data, region):
+        data = data.copy()
+        data['quantile'] = pd.qcut(data[region + '-demand'], q=10)
+        quantile_counts = data.groupby('quantile', as_index=False).agg(
+            quantile_count=pd.NamedAgg(column="quantile", aggfunc="count"))
+        data = pd.merge(data, quantile_counts, on='quantile')
+        data['weight'] = 1 / data['quantile_count']
+        data = data.sample(n=500, weights=data['weight'], replace=True)
+        return data.drop(columns=['quantile', 'quantile_count', 'weight'])
+
+    def _sample_by_most_recent(self, data, target_col):
+        data = data.copy()
+        groups = 50
+        data = data[data[target_col] <= 300]
+        data = data[data[target_col] >= 0]
+        data['bin'] = pd.cut(data[target_col], bins=groups)
+        data['sample_order'] = data.groupby('bin').cumcount()
+        data = data[data['sample_order'] < 10]
+        return data.drop(columns=['bin'])
 
     def price_forecast(self, forward_data, region, market, min_delta, max_delta, steps):
         prediction = forward_data.loc[:, ['interval']]
