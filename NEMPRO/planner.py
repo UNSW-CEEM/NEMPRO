@@ -652,17 +652,132 @@ class Forecaster:
         return prediction
 
 
+class ForecastModel:
+    def __init__(self, alpha, beta, layers, bins, sample_size, tabu_child_nodes=['hour', 'dayofweek', 'dayofyear'],
+                 tabu_edges=[('constraint', 'demand'), ('demand', 'demand'),
+                             ('constraint', 'constraint'), ('capacity', 'capacity'),
+                             ('capacity', 'demand'), ('demand', 'capacity')]):
+        self.generic_tabu_child_nodes = tabu_child_nodes
+        self.generic_tabu_edges = tabu_edges
+        self.alpha = alpha
+        self.beta = beta
+        self.layers = layers
+        self.bins = bins
+        self.sample_size = sample_size
+
+    def _expand_tabu_edges(self, data_columns):
+        """Prepare the tabu_edges input for the DAGregressor
+
+        Examples
+        --------
+
+        >>> f = Forecaster()
+
+        >>> f._expand_tabu_edges(data_columns=['demand-1', 'demand-2', 'constraint-1',
+        ...                                    'availability-1', 'availability-2'])
+
+        Parameters
+        ----------
+        data_columns
+
+        Returns
+        -------
+
+        """
+        expanded_edges = []
+        for generic_edge in self.generic_tabu_edges:
+            first_generic_node = generic_edge[0]
+            second_generic_node = generic_edge[1]
+            specific_first_nodes = [col for col in data_columns if first_generic_node in col]
+            specific_second_nodes = [col for col in data_columns if second_generic_node in col]
+            specific_edges = product(specific_first_nodes, specific_second_nodes)
+            specific_edges = [edge for edge in specific_edges if edge[0] != edge[1]]
+            expanded_edges += specific_edges
+
+        return expanded_edges
+
+    @staticmethod
+    def _sample_by_most_recent(data, target_col, bins, sample_size):
+        data = data.copy()
+        data = data[data[target_col] <= 300]
+        data = data[data[target_col] >= 0]
+        data['bin'] = pd.cut(data[target_col], bins=bins)
+        data['sample_order'] = data.groupby('bin').cumcount()
+        samples_per_bin = int(sample_size / bins)
+        data = data[data['sample_order'] < samples_per_bin]
+        return data.drop(columns=['bin'])
+
+    def train(self, data, target_col):
+        features = [col for col in data.columns if col != target_col]
+        tabu_child_nodes = [col for col in self.generic_tabu_child_nodes if col in features]
+        self.regressor = DAGRegressor(threshold=0.0,
+                                      alpha=self.alpha,
+                                      beta=self.beta,
+                                      fit_intercept=True,
+                                      hidden_layer_units=self.layers,
+                                      standardize=True,
+                                      tabu_child_nodes=tabu_child_nodes,
+                                      tabu_edges=self._expand_tabu_edges(features))
+        train = self._sample_by_most_recent(data, target_col, self.bins, self.sample_size)
+        train = train.reset_index(drop=True)
+        X, y = train.loc[:, features], np.asarray(train[target_col])
+        self.regressor.fit(X, y)
+
+    def predict(self, forward_data):
+        X = forward_data.loc[:, [col for col in forward_data.columns if col not in ['interval', 'scenario']]]
+        Y = self.regressor.predict(X)
+        return Y
+
+
+class MultiMarketForecaster:
+    def __init__(self, alpha=0.001, beta=0.5, layers=[5, 5], bins=50, sample_size=5000):
+        self.forecast_model_by_market = {}
+        self.alpha = alpha
+        self.beta = beta
+        self.layers = layers
+        self.bins = bins
+        self.sample_size = sample_size
+
+    def train(self, price_data, regression_features):
+        for market in price_data.columns:
+            if market != 'interval':
+                self.forecast_model_by_market[market] = ForecastModel(self.alpha, self.beta, self.layers, self.bins,
+                                                                      self.sample_size)
+                data = pd.merge(price_data.loc[:, ['interval', market]], regression_features, on='interval')
+                self.forecast_model_by_market[market].train(data, market)
+
     def multi_region_price_forecast(self, forward_data, fleet_deltas):
         forward_data = generate_forward_sensitivities(forward_data, fleet_deltas)
-        for col in forward_data.columns:
-            if '-fleet-delta'in col:
-                region = col.split('-')[0]
-                X = forward_data.loc[:, self.features_by_region[region]]
-                forward_data[region + '-energy'] = self.model_by_region[region].predict[X]
-
+        results = forward_data.copy()
+        for market in fleet_deltas.keys():
+            results[market] = self.forecast_model_by_market[market].predict(forward_data)
+        return results
 
 
 def generate_forward_sensitivities(forward_data, fleet_deltas_by_region):
+    """
+    Examples
+    --------
+
+    >>> data = pd.DataFrame({
+    ... 'interval': [0, 1, 2, 3],
+    ... 'nsw-demand': [0, 100, 200, 250]})
+
+    >>> deltas_by_region = {'nsw-fleet-delta': [0, 20]}
+
+    >>> generate_forward_sensitivities(data, deltas_by_region)
+       interval  nsw-demand  scenario  nsw-fleet-delta
+    0         0           0         0                0
+    1         0         -20         1               20
+    2         1         100         0                0
+    3         1          80         1               20
+    4         2         200         0                0
+    5         2         180         1               20
+    6         3         250         0                0
+    7         3         230         1               20
+
+
+    """
     demand_delta_scenarios = create_dataframe_of_fleet_deltas(fleet_deltas_by_region)
     forward_data = add_forecast_fleet_dispatch_to_regional_demand(forward_data)
     forward_data = pd.merge(forward_data, demand_delta_scenarios, how='cross')

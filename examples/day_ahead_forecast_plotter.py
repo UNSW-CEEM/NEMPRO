@@ -3,6 +3,8 @@ import random
 from datetime import datetime, timedelta
 import itertools
 import time
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from NEMPRO import historical_inputs, planner
 
@@ -24,13 +26,13 @@ def datetime_to_aemo_format(date_time):
 
 
 end_training_periods = get_test_start_intervals(30)
-training_lengths = [1, 2, 7, 30]
-alphas = [0.0001, 0.0005, 0.001]
-betas = [0.5, 0.4, 0.6]
-layers = [[5], [10], [5, 5]]
-include_day_of_week = [False, True]
-bins = [50, 100]
-train_set_size = [500, 5000]
+training_lengths = [7]
+alphas = [0.001]
+betas = [0.5]
+layers = [[5, 5]]
+include_day_of_week = [False]
+bins = [50]
+train_set_size = [5000]
 
 record_end_training_periods = []
 record_training_lengths = []
@@ -128,32 +130,14 @@ for end_training_period, training_length, alpha, beta, layer, day_of_week, bin, 
         plus_one_giggawatts_price_change.append((error_data[-1000] - error_data[0]).mean())
         plus_five_giggawatts_price_change.append((error_data[-5000] - error_data[0]).mean())
         minus_one_giggawatts_price_change.append((error_data[1000] - error_data[0]).mean())
+
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        fig.add_trace(go.Scatter(x=error_data['interval'], y=error_data[0], name='forecast'))
+        fig.add_trace(go.Scatter(x=error_data['interval'], y=error_data['nsw-energy'], name='hist'))
+        fig.show()
+
     except:
         print(end_training_period)
 
-results = pd.DataFrame({
-    'end_training_period': record_end_training_periods,
-    'training_length': record_training_lengths,
-    'alpha': record_alphas,
-    'beta': record_betas,
-    'layers': [str(l) for l in record_layers],
-    'include_day_of_week': record_include_day_of_week,
-    'bins': record_bins,
-    'max_training_sample': record_train_set_size,
-    'average_absolute_error': average_absolute_error,
-    'average_error': average_error,
-    'plus_one_giggawatts_price_change': plus_one_giggawatts_price_change,
-    'plus_five_giggawatts_price_change': plus_five_giggawatts_price_change,
-    'minus_one_giggawatts_price_change': minus_one_giggawatts_price_change
-})
 
-results.to_csv('day_ahead_tuning_results.csv', index=False)
 
-results_summary = results.groupby(['training_length', 'beta', 'alpha', 'layers', 'include_day_of_week',
-                                   'bins', 'max_training_sample'], as_index=False).aggregate('mean')
-
-results_summary.to_csv('day_ahead_tuning_results_summary.csv', index=False)
-
-t1 = time.time()
-
-print('time to run {} tests was {}'.format(c, t1-t0))
