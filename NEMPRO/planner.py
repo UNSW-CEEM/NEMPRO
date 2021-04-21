@@ -593,23 +593,23 @@ class Forecaster:
 
         return expanded_edges
 
-    def train(self, data, train_sample_fraction, target_col):
+    def train(self, data, train_sample_fraction, target_col, alpha, beta, layers, bins, sample_size):
         self.target_col = target_col
         self.features = [col for col in data.columns
                          if col not in [target_col, 'interval'] and 'fleet-dispatch' not in col]
         tabu_child_nodes = [col for col in self.generic_tabu_edges if col in self.features]
         self.regressor = DAGRegressor(threshold=0.0,
-                                      alpha=0.0001,
-                                      beta=0.5,
+                                      alpha=alpha,
+                                      beta=beta,
                                       fit_intercept=True,
-                                      hidden_layer_units=[5],
+                                      hidden_layer_units=layers,
                                       standardize=True,
                                       tabu_child_nodes=tabu_child_nodes,
                                       tabu_edges=self._expand_tabu_edges(self.features))
-        n_rows = len(data.index)
-        sample_size = int(n_rows * train_sample_fraction)
+        #n_rows = len(data.index)
+        #sample_size = int(n_rows * train_sample_fraction)
         #train = data.sample(n=500, replace=True)
-        train = self._sample_by_most_recent(data, target_col)
+        train = self._sample_by_most_recent(data, target_col, bins, sample_size)
         train = train.reset_index(drop=True)
         X, y = train.loc[:, self.features], np.asarray(train[target_col])
         self.regressor.fit(X, y)
@@ -624,22 +624,21 @@ class Forecaster:
         data = data.sample(n=500, weights=data['weight'], replace=True)
         return data.drop(columns=['quantile', 'quantile_count', 'weight'])
 
-    def _sample_by_most_recent(self, data, target_col):
+    def _sample_by_most_recent(self, data, target_col, bins, sample_size):
         data = data.copy()
-        groups = 50
         data = data[data[target_col] <= 300]
         data = data[data[target_col] >= 0]
-        data['bin'] = pd.cut(data[target_col], bins=groups)
+        data['bin'] = pd.cut(data[target_col], bins=bins)
         data['sample_order'] = data.groupby('bin').cumcount()
-        data = data[data['sample_order'] < 10]
+        samples_per_bin = int(sample_size / bins)
+        data = data[data['sample_order'] < samples_per_bin]
         return data.drop(columns=['bin'])
 
-    def price_forecast(self, forward_data, region, market, min_delta, max_delta, steps):
+    def price_forecast(self, forward_data, region, market, demand_delta):
         prediction = forward_data.loc[:, ['interval']]
         forward_data['old_demand'] = forward_data[region + '-demand'] + forward_data[market + '-fleet-dispatch']
-        delta_step_size = max(int((max_delta - min_delta) / steps), 1)
-        for delta in range(int(min_delta), int(max_delta) + delta_step_size * 2, delta_step_size):
-            forward_data[region + '-demand'] = forward_data['old_demand'] - delta
+        for delta in demand_delta:
+            forward_data[region + '-demand'] = forward_data['old_demand'] + delta
             X = forward_data.loc[:, self.features]
             Y = self.regressor.predict(X)
             prediction[delta] = Y
@@ -651,3 +650,97 @@ class Forecaster:
         Y = self.regressor.predict(X)
         prediction[self.target_col] = Y
         return prediction
+
+
+    def multi_region_price_forecast(self, forward_data, fleet_deltas):
+        forward_data = generate_forward_sensitivities(forward_data, fleet_deltas)
+        for col in forward_data.columns:
+            if '-fleet-delta'in col:
+                region = col.split('-')[0]
+                X = forward_data.loc[:, self.features_by_region[region]]
+                forward_data[region + '-energy'] = self.model_by_region[region].predict[X]
+
+
+
+def generate_forward_sensitivities(forward_data, fleet_deltas_by_region):
+    demand_delta_scenarios = create_dataframe_of_fleet_deltas(fleet_deltas_by_region)
+    forward_data = add_forecast_fleet_dispatch_to_regional_demand(forward_data)
+    forward_data = pd.merge(forward_data, demand_delta_scenarios, how='cross')
+    forward_data = net_off_fleet_deltas_from_regional_demand(forward_data)
+    return forward_data
+
+
+def create_dataframe_of_fleet_deltas(fleet_deltas_by_region):
+    """
+    Examples
+    --------
+
+    >>> deltas = {'nsw-fleet-delta': [0, 100], 'vic-fleet-delta': [0, 50, 150]}
+
+    >>> create_dataframe_of_fleet_deltas(deltas)
+       scenario  nsw-fleet-delta  vic-fleet-delta
+    0         0                0                0
+    1         1                0               50
+    2         2                0              150
+    3         3              100                0
+    4         4              100               50
+    5         5              100              150
+    """
+    regions = list(fleet_deltas_by_region.keys())
+    fleet_deltas = list(fleet_deltas_by_region.values())
+    rows = product(*fleet_deltas)
+    fleet_deltas = pd.DataFrame(data=rows, columns=regions)
+    fleet_deltas['scenario'] = fleet_deltas.index
+    return fleet_deltas.loc[:, ['scenario'] + regions]
+
+
+def add_forecast_fleet_dispatch_to_regional_demand(forward_data):
+    """
+    Examples
+    --------
+
+    >>> forecast_data = pd.DataFrame({
+    ...  'nsw-demand': [100, 120, 130, 125],
+    ...  'nsw-fleet-dispatch': [-10, 20, 40, 20]})
+
+    >>> add_forecast_fleet_dispatch_to_regional_demand(forecast_data)
+       nsw-demand  nsw-fleet-dispatch
+    0          90                   0
+    1         140                  20
+    2         170                  40
+    3         145                  20
+
+    """
+    cols = forward_data.columns
+    for col in cols:
+        if 'fleet-dispatch' in col:
+            region = col.split('-')[0]
+            demand_col = region + '-demand'
+            forward_data[demand_col] += forward_data[col]
+    return forward_data
+
+
+def net_off_fleet_deltas_from_regional_demand(forward_scenario_data):
+    """
+    Examples
+    --------
+
+    >>> forecast_data = pd.DataFrame({
+    ...  'nsw-demand': [100, 120, 130, 125],
+    ...  'nsw-fleet-delta': [-10, 20, 40, 20]})
+
+    >>> add_forecast_fleet_dispatch_to_regional_demand(forecast_data)
+       nsw-demand  nsw-fleet-delta
+    0         100              -10
+    1         120               20
+    2         130               40
+    3         125               20
+
+    """
+    cols = forward_scenario_data.columns
+    for col in cols:
+        if 'fleet-delta' in col:
+            region = col.split('-')[0]
+            demand_col = region + '-demand'
+            forward_scenario_data[demand_col] -= forward_scenario_data[col]
+    return forward_scenario_data
