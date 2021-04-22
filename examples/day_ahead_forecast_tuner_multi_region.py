@@ -22,24 +22,15 @@ def get_test_start_intervals(number):
 def datetime_to_aemo_format(date_time):
     return date_time.isoformat().replace('T', ' ').replace('-', '/')
 
-#
-# end_training_periods = get_test_start_intervals(30)
-# training_lengths = [1, 2, 7, 30]
-# alphas = [0.0001, 0.0005, 0.001]
-# betas = [0.5, 0.4, 0.6]
-# layers = [[5], [10], [5, 5]]
-# include_day_of_week = [False, True]
-# bins = [50, 100]
-# train_set_size = [500, 5000]
 
 end_training_periods = get_test_start_intervals(30)
-training_lengths = [7]
+training_lengths = [7, 30, 365]
 alphas = [0.0001]
 betas = [0.6]
-layers = [[5]]
+layers = [[5], [10, 10]]
 include_day_of_week = [False]
-bins = [50]
-train_set_size = [5000]
+bins = [25, 50, 100]
+train_set_size = [5000, 10000]
 
 record_end_training_periods = []
 record_training_lengths = []
@@ -86,7 +77,7 @@ for end_training_period, training_length, alpha, beta, layer, day_of_week, bin, 
                                                             raw_data_cache)
 
         historical_data = pd.merge(price_data, demand_data, on='SETTLEMENTDATE')
-        historical_data.sort_values('SETTLEMENTDATE')
+        historical_data.sort_values('SETTLEMENTDATE', ascending=False)
         historical_data = historical_data.reset_index(drop=True)
         historical_data['interval'] = historical_data.index
         historical_data['hour'] = historical_data['SETTLEMENTDATE'].dt.hour
@@ -94,7 +85,6 @@ for end_training_period, training_length, alpha, beta, layer, day_of_week, bin, 
             historical_data['dayofweek'] = historical_data['SETTLEMENTDATE'].dt.day_of_week
         historical_data.sort_values('SETTLEMENTDATE', ascending=False)
         historical_data = historical_data.drop(columns=['SETTLEMENTDATE'])
-        historical_data['nsw-energy-fleet-dispatch'] = 0.0
 
         demand_data = historical_inputs.get_residual_demand(start_time_forward_data,
                                                             end_time_forward_data,
@@ -106,13 +96,23 @@ for end_training_period, training_length, alpha, beta, layer, day_of_week, bin, 
         if day_of_week:
             forward_data['dayofweek'] = forward_data['SETTLEMENTDATE'].dt.day_of_week
         forward_data = forward_data.drop(columns=['SETTLEMENTDATE'])
-        forward_data['nsw-energy-fleet-dispatch'] = 0.0
 
-        f = planner.Forecaster()
-        f.train(historical_data, train_sample_fraction=1, target_col='nsw-energy', alpha=alpha, beta=beta,
-                layers=layer, bins=bin, sample_size=set_size)
-        forecast = f.price_forecast(forward_data, region='nsw', market='nsw-energy',
-                                    demand_delta=[-5000.0, -1000.0, 0.0, 1000.0])
+        hist_price_data = historical_data.loc[:, ['interval', 'nsw-energy']]
+        hist_regression_features = historical_data.loc[:,
+                                   ['interval', 'qld-demand', 'nsw-demand', 'vic-demand', 'sa-demand',
+                                    'tas-demand', 'hour']]
+
+        f = planner.MultiMarketForecaster(alpha=alpha, beta=beta, layers=layer, bins=bin, sample_size=set_size)
+        f.train(hist_price_data, hist_regression_features)
+
+        #f.forecast_model_by_market['nsw-energy'] = f0.regressor
+
+        fleet_dispatch_delta = {'nsw-energy': [-1000, 0, 1000, -5000]}
+
+        forecast = f.multi_region_price_forecast(forward_data, fleet_dispatch_delta)
+
+        forecast = forecast.pivot(index='interval', columns='nsw-energy-fleet-delta', values='nsw-energy')
+        #forecast['interval'] = forecast.index
 
         price_data = historical_inputs.get_regional_prices(start_time_forward_data,
                                                            end_time_forward_data,
@@ -156,12 +156,12 @@ results = pd.DataFrame({
     'minus_one_giggawatts_price_change': minus_one_giggawatts_price_change
 })
 
-results.to_csv('day_ahead_tuning_results_test.csv', index=False)
+results.to_csv('day_ahead_tuning_results_multi_region.csv', index=False)
 
 results_summary = results.groupby(['training_length', 'beta', 'alpha', 'layers', 'include_day_of_week',
                                    'bins', 'max_training_sample'], as_index=False).aggregate('mean')
 
-results_summary.to_csv('day_ahead_tuning_results_summary_test.csv', index=False)
+results_summary.to_csv('day_ahead_tuning_results_summary_multi_region.csv', index=False)
 
 t1 = time.time()
 

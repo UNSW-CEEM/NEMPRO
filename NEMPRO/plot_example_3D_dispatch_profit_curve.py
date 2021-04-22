@@ -11,8 +11,8 @@ def datetime_to_aemo_format(date_time):
 
 raw_data_cache = 'C:/Users/nick/Documents/nem_data'
 
-end_training_period = '2020/05/30 00:00:00'
-training_length = 7
+end_training_period = '2020/10/19 16:35:00'
+training_length = 120
 
 end_time = datetime.strptime(end_training_period, '%Y/%m/%d %H:%M:%S')
 start_time_historical_data = datetime_to_aemo_format(end_time - timedelta(days=training_length))
@@ -35,7 +35,7 @@ historical_data = pd.merge(price_data, demand_data, on='SETTLEMENTDATE')
 historical_data.sort_values('SETTLEMENTDATE')
 historical_data = historical_data.reset_index(drop=True)
 historical_data['interval'] = historical_data.index
-historical_data.sort_values('SETTLEMENTDATE', ascending=False)
+historical_data.sort_values('SETTLEMENTDATE')
 historical_data = historical_data.drop(columns=['SETTLEMENTDATE'])
 
 demand_data = historical_inputs.get_residual_demand(start_time_forward_data,
@@ -51,19 +51,20 @@ hist_regression_features = historical_data.loc[:, ['interval', 'qld-demand', 'ns
                                                    'tas-demand']]
 
 f = planner.MultiMarketForecaster()
-f.train(hist_price_data, hist_regression_features)
+f.train(hist_price_data, hist_regression_features, ['nsw-demand', 'qld-demand'])
 
-fleet_dispatch_delta = {'nsw-fleet-delta': [0, 500, 1000, 2000, 2500, 3000],
-                        'qld-fleet-delta': [0, 500, 1000, 2000, 2500, 3000]}
+fleet_dispatch_delta = {'nsw-energy': [0, 500, 1000, 1500, 2000, 2500, 3000],
+                        'qld-energy': [0, 500, 1000, 1500, 2000, 2500, 3000]}
 
 forecast = f.multi_region_price_forecast(forward_data, fleet_dispatch_delta)
 
 first_interval_results = forecast[forecast['interval'] == 0]
 
-nsw_dispatch = first_interval_results['nsw-fleet-delta']
-qld_dispatch = first_interval_results['qld-fleet-delta']
+nsw_dispatch = first_interval_results['nsw-energy-fleet-delta']
+qld_dispatch = first_interval_results['qld-energy-fleet-delta']
 
-revenue = nsw_dispatch * first_interval_results['nsw-energy'] + qld_dispatch * first_interval_results['qld-energy']
+revenue = nsw_dispatch * first_interval_results['nsw-energy'] + qld_dispatch * first_interval_results['qld-energy'] \
+    + nsw_dispatch * -30.0 + qld_dispatch * -30.0
 
 fig = plt.figure()
 ax = plt.axes(projection="3d")

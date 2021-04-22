@@ -612,6 +612,7 @@ class Forecaster:
         train = self._sample_by_most_recent(data, target_col, bins, sample_size)
         train = train.reset_index(drop=True)
         X, y = train.loc[:, self.features], np.asarray(train[target_col])
+        self.X = X
         self.regressor.fit(X, y)
 
     def _sample(self, data, region):
@@ -664,6 +665,7 @@ class ForecastModel:
         self.layers = layers
         self.bins = bins
         self.sample_size = sample_size
+        self.features = None
 
     def _expand_tabu_edges(self, data_columns):
         """Prepare the tabu_edges input for the DAGregressor
@@ -707,9 +709,44 @@ class ForecastModel:
         data = data[data['sample_order'] < samples_per_bin]
         return data.drop(columns=['bin'])
 
-    def train(self, data, target_col):
-        features = [col for col in data.columns if col != target_col]
-        tabu_child_nodes = [col for col in self.generic_tabu_child_nodes if col in features]
+    @staticmethod
+    def _sample_by_most_recent_allow_resample(data, target_col, bins, sample_size):
+        data = data.copy()
+        data = data[data[target_col] <= 1000]
+        data = data[data[target_col] >= -100]
+        data['bin'] = pd.cut(data[target_col], bins=bins)
+        data['weight'] = (data['interval'] / 288).apply(lambda x: math.floor(x)) + 1
+        samples_per_bin = int(sample_size / bins)
+        bin_counts = data.groupby('bin', as_index=False)['interval'].count()
+        bins_to_use = bin_counts[bin_counts['interval'] >= 30]
+        data = data[data['bin'].isin(bins_to_use['bin'])].reset_index(drop=True)
+        data = data.groupby('bin', as_index=False, observed=True).sample(n=samples_per_bin, replace=True,
+                                                                         weights=data['weight'])
+        return data.drop(columns=['bin', 'weight'])
+
+    @staticmethod
+    def _sample_across_scenario_variables(data, target_col, bins, sample_size, scenario_variable_columns):
+        data = data.copy()
+        data = data[data[target_col] <= 1000]
+        data = data[data[target_col] >= -100]
+        groups = []
+        for var in scenario_variable_columns:
+            group = 'bin-' + str(var)
+            groups.append(group)
+            data[group] = pd.cut(data[var], bins=bins)
+        data['weight'] = (data['interval'] / 288).apply(lambda x: math.floor(x)) + 1
+        bin_counts = data.groupby(groups, as_index=False)['interval'].count()
+        bins_to_use = bin_counts[bin_counts['interval'] >= 0].loc[:, groups]
+        data = pd.merge(data, bins_to_use, on=groups)
+        actual_number_of_bins = len(data.drop_duplicates(subset = groups))
+        samples_per_bin = int(sample_size / actual_number_of_bins)
+        data = data.groupby(groups, as_index=False, observed=True).sample(n=samples_per_bin, replace=True,
+                                                                         weights=data['weight'])
+        return data.drop(columns=groups + ['weight'])
+
+    def train(self, data, target_col, scenario_variable_columns):
+        self.features = [col for col in data.columns if col not in [target_col, 'interval']]
+        tabu_child_nodes = [col for col in self.generic_tabu_child_nodes if col in self.features]
         self.regressor = DAGRegressor(threshold=0.0,
                                       alpha=self.alpha,
                                       beta=self.beta,
@@ -717,20 +754,20 @@ class ForecastModel:
                                       hidden_layer_units=self.layers,
                                       standardize=True,
                                       tabu_child_nodes=tabu_child_nodes,
-                                      tabu_edges=self._expand_tabu_edges(features))
-        train = self._sample_by_most_recent(data, target_col, self.bins, self.sample_size)
+                                      tabu_edges=self._expand_tabu_edges(self.features))
+        train = self._sample_across_scenario_variables(data, target_col, self.bins, self.sample_size, scenario_variable_columns)
         train = train.reset_index(drop=True)
-        X, y = train.loc[:, features], np.asarray(train[target_col])
+        X, y = train.loc[:, self.features], np.asarray(train[target_col])
         self.regressor.fit(X, y)
 
     def predict(self, forward_data):
-        X = forward_data.loc[:, [col for col in forward_data.columns if col not in ['interval', 'scenario']]]
+        X = forward_data.loc[:, self.features]
         Y = self.regressor.predict(X)
         return Y
 
 
 class MultiMarketForecaster:
-    def __init__(self, alpha=0.001, beta=0.5, layers=[5, 5], bins=50, sample_size=5000):
+    def __init__(self, alpha=0.0001, beta=0.6, layers=[5], bins=10, sample_size=5000):
         self.forecast_model_by_market = {}
         self.alpha = alpha
         self.beta = beta
@@ -738,19 +775,22 @@ class MultiMarketForecaster:
         self.bins = bins
         self.sample_size = sample_size
 
-    def train(self, price_data, regression_features):
+    def train(self, price_data, regression_features, scenario_variable_columns):
         for market in price_data.columns:
             if market != 'interval':
                 self.forecast_model_by_market[market] = ForecastModel(self.alpha, self.beta, self.layers, self.bins,
                                                                       self.sample_size)
                 data = pd.merge(price_data.loc[:, ['interval', market]], regression_features, on='interval')
-                self.forecast_model_by_market[market].train(data, market)
+                self.forecast_model_by_market[market].train(data, market, scenario_variable_columns)
 
     def multi_region_price_forecast(self, forward_data, fleet_deltas):
+        feature_columns = [col for col in forward_data.columns if col != 'interval']
         forward_data = generate_forward_sensitivities(forward_data, fleet_deltas)
+        #forward_data = forward_data.reset_index(drop=True)
         results = forward_data.copy()
         for market in fleet_deltas.keys():
-            results[market] = self.forecast_model_by_market[market].predict(forward_data)
+            features = forward_data.loc[:, feature_columns]
+            results[market] = self.forecast_model_by_market[market].predict(features)
         return results
 
 
@@ -763,18 +803,18 @@ def generate_forward_sensitivities(forward_data, fleet_deltas_by_region):
     ... 'interval': [0, 1, 2, 3],
     ... 'nsw-demand': [0, 100, 200, 250]})
 
-    >>> deltas_by_region = {'nsw-fleet-delta': [0, 20]}
+    >>> deltas_by_region = {'nsw-energy': [0, 20]}
 
     >>> generate_forward_sensitivities(data, deltas_by_region)
-       interval  nsw-demand  scenario  nsw-fleet-delta
-    0         0           0         0                0
-    1         0         -20         1               20
-    2         1         100         0                0
-    3         1          80         1               20
-    4         2         200         0                0
-    5         2         180         1               20
-    6         3         250         0                0
-    7         3         230         1               20
+       interval  nsw-demand  scenario  nsw-energy-fleet-delta
+    0         0           0         0                       0
+    1         0         -20         1                      20
+    2         1         100         0                       0
+    3         1          80         1                      20
+    4         2         200         0                       0
+    5         2         180         1                      20
+    6         3         250         0                       0
+    7         3         230         1                      20
 
 
     """
@@ -790,23 +830,24 @@ def create_dataframe_of_fleet_deltas(fleet_deltas_by_region):
     Examples
     --------
 
-    >>> deltas = {'nsw-fleet-delta': [0, 100], 'vic-fleet-delta': [0, 50, 150]}
+    >>> deltas = {'nsw-energy': [0, 100], 'vic-energy': [0, 50, 150]}
 
     >>> create_dataframe_of_fleet_deltas(deltas)
-       scenario  nsw-fleet-delta  vic-fleet-delta
-    0         0                0                0
-    1         1                0               50
-    2         2                0              150
-    3         3              100                0
-    4         4              100               50
-    5         5              100              150
+       scenario  nsw-energy-fleet-delta  vic-energy-fleet-delta
+    0         0                       0                       0
+    1         1                       0                      50
+    2         2                       0                     150
+    3         3                     100                       0
+    4         4                     100                      50
+    5         5                     100                     150
     """
-    regions = list(fleet_deltas_by_region.keys())
+    markets = list(fleet_deltas_by_region.keys())
+    markets = [market + '-fleet-delta' for market in markets]
     fleet_deltas = list(fleet_deltas_by_region.values())
     rows = product(*fleet_deltas)
-    fleet_deltas = pd.DataFrame(data=rows, columns=regions)
+    fleet_deltas = pd.DataFrame(data=rows, columns=markets)
     fleet_deltas['scenario'] = fleet_deltas.index
-    return fleet_deltas.loc[:, ['scenario'] + regions]
+    return fleet_deltas.loc[:, ['scenario'] + markets]
 
 
 def add_forecast_fleet_dispatch_to_regional_demand(forward_data):
@@ -842,14 +883,14 @@ def net_off_fleet_deltas_from_regional_demand(forward_scenario_data):
 
     >>> forecast_data = pd.DataFrame({
     ...  'nsw-demand': [100, 120, 130, 125],
-    ...  'nsw-fleet-delta': [-10, 20, 40, 20]})
+    ...  'nsw-energy-fleet-delta': [-10, 20, 40, 20]})
 
-    >>> add_forecast_fleet_dispatch_to_regional_demand(forecast_data)
-       nsw-demand  nsw-fleet-delta
-    0         100              -10
-    1         120               20
-    2         130               40
-    3         125               20
+    >>> net_off_fleet_deltas_from_regional_demand(forecast_data)
+       nsw-demand  nsw-energy-fleet-delta
+    0         110                     -10
+    1         100                      20
+    2          90                      40
+    3         105                      20
 
     """
     cols = forward_scenario_data.columns
@@ -859,3 +900,5 @@ def net_off_fleet_deltas_from_regional_demand(forward_scenario_data):
             demand_col = region + '-demand'
             forward_scenario_data[demand_col] -= forward_scenario_data[col]
     return forward_scenario_data
+
+
