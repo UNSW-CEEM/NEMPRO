@@ -77,7 +77,7 @@ for end_training_period in end_training_periods:
                                     'tas-demand']]
 
         f = planner.MultiMarketForecaster()
-        f.train(hist_price_data, hist_regression_features)
+        f.train(hist_price_data, hist_regression_features, ['nsw-demand', 'qld-demand'])
 
         fleet_dispatch_delta = {'nsw-energy': [-1000, 0, 1000]}
 

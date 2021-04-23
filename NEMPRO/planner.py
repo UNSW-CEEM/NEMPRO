@@ -733,7 +733,7 @@ class ForecastModel:
         for var in scenario_variable_columns:
             group = 'bin-' + str(var)
             groups.append(group)
-            data[group] = pd.cut(data[var], bins=bins)
+            data[group] = pd.cut(pd.to_numeric(data[var]), bins=bins)
         data['weight'] = (data['interval'] / 288).apply(lambda x: math.floor(x)) + 1
         bin_counts = data.groupby(groups, as_index=False)['interval'].count()
         bins_to_use = bin_counts[bin_counts['interval'] >= 0].loc[:, groups]

@@ -27,9 +27,9 @@ end_training_periods = get_test_start_intervals(30)
 training_lengths = [7, 30, 365]
 alphas = [0.0001]
 betas = [0.6]
-layers = [[5], [10, 10]]
+layers = [[5], [5, 5], [8, 8], [5, 5, 5]]
 include_day_of_week = [False]
-bins = [25, 50, 100]
+bins = [10, 20]
 train_set_size = [5000, 10000]
 
 record_end_training_periods = []
@@ -77,13 +77,12 @@ for end_training_period, training_length, alpha, beta, layer, day_of_week, bin, 
                                                             raw_data_cache)
 
         historical_data = pd.merge(price_data, demand_data, on='SETTLEMENTDATE')
-        historical_data.sort_values('SETTLEMENTDATE', ascending=False)
+        historical_data = historical_data.sort_values('SETTLEMENTDATE')
         historical_data = historical_data.reset_index(drop=True)
         historical_data['interval'] = historical_data.index
         historical_data['hour'] = historical_data['SETTLEMENTDATE'].dt.hour
         if day_of_week:
             historical_data['dayofweek'] = historical_data['SETTLEMENTDATE'].dt.day_of_week
-        historical_data.sort_values('SETTLEMENTDATE', ascending=False)
         historical_data = historical_data.drop(columns=['SETTLEMENTDATE'])
 
         demand_data = historical_inputs.get_residual_demand(start_time_forward_data,
@@ -103,11 +102,12 @@ for end_training_period, training_length, alpha, beta, layer, day_of_week, bin, 
                                     'tas-demand', 'hour']]
 
         f = planner.MultiMarketForecaster(alpha=alpha, beta=beta, layers=layer, bins=bin, sample_size=set_size)
-        f.train(hist_price_data, hist_regression_features)
+        f.train(hist_price_data, hist_regression_features, ['qld-demand', 'nsw-demand', 'vic-demand'])
 
         #f.forecast_model_by_market['nsw-energy'] = f0.regressor
 
         fleet_dispatch_delta = {'nsw-energy': [-1000, 0, 1000, -5000]}
+
 
         forecast = f.multi_region_price_forecast(forward_data, fleet_dispatch_delta)
 
@@ -156,12 +156,12 @@ results = pd.DataFrame({
     'minus_one_giggawatts_price_change': minus_one_giggawatts_price_change
 })
 
-results.to_csv('day_ahead_tuning_results_multi_region.csv', index=False)
+results.to_csv('day_ahead_tuning_results_multi_region_grid_sampling.csv', index=False)
 
 results_summary = results.groupby(['training_length', 'beta', 'alpha', 'layers', 'include_day_of_week',
                                    'bins', 'max_training_sample'], as_index=False).aggregate('mean')
 
-results_summary.to_csv('day_ahead_tuning_results_summary_multi_region.csv', index=False)
+results_summary.to_csv('day_ahead_tuning_results_summary_multi_region_grid_sampling.csv', index=False)
 
 t1 = time.time()
 
