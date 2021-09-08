@@ -373,7 +373,6 @@ class DispatchPlanner:
         return self.forward_data.loc[:, ['interval']]
 
 
-
 def _create_dispatch_dependent_price_traces(price_forecast, self_dispatch_forecast, capacity_min, capacity_max,
                                             demand_increment):
     """

@@ -131,3 +131,4 @@ dmypy.json
 .idea/*
 examples/nem_data/*
 *.csv
+*.html

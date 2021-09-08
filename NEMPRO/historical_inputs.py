@@ -7,6 +7,7 @@ aemo_price_names = {'energy': 'RRP',
                     'raise_60_second': 'RAISE60SECRRP',
                     'raise_5_minute': 'RAISE5MINRRP'}
 
+
 def get_regional_prices(start_time, end_time, raw_data_cache):
 
     dispatch_data = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCHPRICE', raw_data_cache,
@@ -15,7 +16,7 @@ def get_regional_prices(start_time, end_time, raw_data_cache):
                                                                              'RAISE6SECRRP', 'RAISE60SECRRP',
                                                                              'RAISE5MINRRP'])
 
-    dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == '0']
+    dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == 0]
     data = pd.DataFrame()
     for name, aemo_name in aemo_price_names.items():
         dispatch_data[aemo_name] = pd.to_numeric(dispatch_data[aemo_name])
@@ -37,7 +38,7 @@ def get_regional_demand(start_time, end_time, raw_data_cache):
                                                              select_columns=['SETTLEMENTDATE', 'INTERVENTION',
                                                                              'REGIONID', 'TOTALDEMAND'])
 
-    dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == '0']
+    dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == 0]
 
     dispatch_data['TOTALDEMAND'] = pd.to_numeric(dispatch_data['TOTALDEMAND'])
 
@@ -92,7 +93,7 @@ def get_tech_operating_capacities(start_time, end_time, raw_data_cache):
                                                              select_columns=['DUID', 'SETTLEMENTDATE',
                                                                              'INTERVENTION', 'AVAILABILITY'])
 
-    dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == '0']
+    dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == 0]
 
 
     dispatch_data = pd.merge(dispatch_data, tech_data, on='DUID')
@@ -116,7 +117,7 @@ def get_fleet_dispatch(start_time, end_time, fleet_units, region, raw_data_cache
                                                              select_columns=['DUID', 'SETTLEMENTDATE', 'TOTALCLEARED',
                                                                              'INTERVENTION', 'RAISEREG', 'RAISE6SEC',
                                                                              'RAISE60SEC', 'RAISE5MIN'])
-    dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == '0']
+    dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == 0]
 
     dispatch_data = dispatch_data[dispatch_data['DUID'].isin(fleet_units)]
 
@@ -144,7 +145,41 @@ def get_unit_dispatch(start_time, end_time, unit, raw_data_cache):
     dispatch_data = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCHLOAD', raw_data_cache,
                                                              select_columns=['DUID', 'SETTLEMENTDATE', 'INTERVENTION',
                                                                              'INITIALMW'])
-    dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == '0']
+    dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == 0]
     dispatch_data = dispatch_data[dispatch_data['DUID'] == unit]
     initial_mw = dispatch_data['INITIALMW'].iloc[0]
     return float(initial_mw)
+
+
+def get_residual_demand(start_time, end_time, raw_data_cache):
+    cols = ['DUID', 'Region', 'Fuel Source - Descriptor']
+    tech_data = data_fetch_methods.static_table_xl('Generators and Scheduled Loads', raw_data_cache, select_columns=cols)
+    zero_srmc_techs = ['Wind', 'Solar', 'Solar ']
+    tech_data = tech_data[tech_data['Fuel Source - Descriptor'].isin(zero_srmc_techs)]
+    scada_data = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCH_UNIT_SCADA', raw_data_cache)
+    scada_data = pd.merge(scada_data, tech_data, on='DUID')
+    scada_data['SCADAVALUE'] = pd.to_numeric(scada_data['SCADAVALUE'])
+    scada_data = scada_data.groupby(['SETTLEMENTDATE', 'Region'], as_index=False).agg({'SCADAVALUE': 'sum'})
+    regional_demand = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCHREGIONSUM', raw_data_cache)
+    regional_demand = regional_demand[regional_demand['INTERVENTION'] == 0]
+    regional_demand = pd.merge(regional_demand, scada_data, left_on=['SETTLEMENTDATE', 'REGIONID'],
+                               right_on=['SETTLEMENTDATE', 'Region'])
+    regional_demand['TOTALDEMAND'] = pd.to_numeric(regional_demand['TOTALDEMAND'])
+    regional_demand['RESIDUALDEMAND'] = regional_demand['TOTALDEMAND'] - regional_demand['SCADAVALUE']
+
+    regional_demand = regional_demand.pivot_table(values='RESIDUALDEMAND', index='SETTLEMENTDATE', columns='REGIONID')
+
+    regional_demand = regional_demand.reset_index().fillna('0.0')
+
+    regional_demand = regional_demand.rename(columns={'QLD1': 'qld', 'NSW1': 'nsw', 'VIC1': 'vic', 'SA1': 'sa',
+                                                  'TAS1': 'tas'})
+
+    regional_demand.columns = [col + '-demand' if col != 'SETTLEMENTDATE' else col for col in regional_demand.columns]
+    return regional_demand
+
+
+def get_region_fraction_of_max_residual_demand(regional_demand, region):
+    regional_demand = regional_demand.groupby('REGIONID', as_index=False).agg({'RESIDUALDEMAND': 'max'})
+    sum_regional_max_regional_demands = regional_demand['RESIDUALDEMAND'].max()
+    regional_max_demand = regional_demand[regional_demand['REGIONID'] == region]['RESIDUALDEMAND'].iloc[0]
+    return regional_max_demand / sum_regional_max_regional_demands
