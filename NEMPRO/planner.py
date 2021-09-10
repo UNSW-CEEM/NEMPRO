@@ -17,7 +17,7 @@ class DispatchPlanner:
         self.units = []
         self.unit_energy_market_mapping = {}
         self.unit_fcas_market_mapping = {}
-        self.model = Model(solver_name='GUROBI', sense='MAX')
+        self.model = Model(solver_name='CBC', sense='MAX')
         self.unit_in_flow_variables = {}
         self.unit_out_flow_variables = {}
         self.units_with_storage = []
@@ -124,29 +124,6 @@ class DispatchPlanner:
             negative_vars = list(self.market_dispatch_variables[region][service][i]['negative'].values())
             self.model += xsum([-1 * self.market_net_dispatch_variables[region][service][i]] + positive_vars +
                                [-1 * var for var in negative_vars]) == 0.0
-
-    def _update_price_forecast(self, market, forward_data):
-        region = market.split('-')[0]
-        service = market.split('-')[1]
-
-        forward_dispatch = self._get_forward_dispatch_trace(region, service, self.forward_data)
-        forward_data = pd.merge(self.forward_data, forward_dispatch, on='interval')
-
-        positive_rate, positive_dispatch, negative_rate, negative_dispatch = self._marginal_market_trade(region,
-                                                                                                         service,
-                                                                                                         forward_data)
-        for i in range(0, self.planning_horizon):
-
-            for dispatch, rate in positive_rate[i].items():
-                dispatch_var_name = "dispatch_{}_{}_positive_{}".format(market, i, dispatch)
-                var = self.model.var_by_name(name=dispatch_var_name)
-                var.obj = rate
-
-            if len(negative_rate) > 0:
-                for dispatch, rate in negative_rate[i].items():
-                    dispatch_var_name = "dispatch_{}_{}_negative_{}".format(market, i, dispatch)
-                    var = self.model.var_by_name(name=dispatch_var_name)
-                    var.obj = rate
 
     def _get_revenue_traces(self, region, service, forward_data):
         target_column_name = region + '-' + service
@@ -283,39 +260,6 @@ class DispatchPlanner:
             unit.create_net_output_vars()
         self._create_constraints_to_balance_grid_nodes()
         self.model.optimize()
-
-    def cross_market_optimise(self):
-        self.optimise()
-
-        convergence_reached = False
-
-        while not convergence_reached:
-            for region_market in self.regional_markets:
-                modified_forward_data = self.forward_data
-                for region_demand_to_update in self.regional_markets:
-                    if 'energy' in region_demand_to_update and region_demand_to_update != region_market:
-                        region = region_demand_to_update.split('-')[0]
-                        forward_dispatch = self._get_forward_dispatch_trace(region, 'energy', self.forward_data)
-                        modified_forward_data = pd.merge(modified_forward_data, forward_dispatch, on='interval')
-                        fleet_dispatch_in_region = self.get_market_dispatch(region_demand_to_update)
-                        modified_forward_data = pd.merge(modified_forward_data, fleet_dispatch_in_region, on='interval')
-                        modified_forward_data[region + '-demand'] = modified_forward_data[region + '-demand'] - \
-                                                                    (modified_forward_data['dispatch'] -
-                                                                     modified_forward_data[
-                                                                         region + '-energy-fleet-dispatch'])
-                        modified_forward_data = modified_forward_data.drop(columns='dispatch')
-                self._update_price_forecast(region_market, forward_data=modified_forward_data)
-            old_dispatch = self.get_dispatch()
-            self.model.optimize()
-            convergence_reached = self._check_convergence(old_dispatch)
-
-    def _check_convergence(self, previous_dispatch):
-        current_dispatch = self.get_dispatch()
-        for col in current_dispatch.columns:
-            difference = ((current_dispatch[col] - previous_dispatch[col]) / previous_dispatch[col]).abs().max()
-            if difference > 0.05:
-                return False
-        return True
 
     def _create_constraints_to_balance_grid_nodes(self):
         for market in self.regional_markets:
@@ -504,7 +448,7 @@ class Forecaster:
                          if col not in [target_col, 'interval'] and 'fleet-dispatch' not in col]
         tabu_child_nodes = [col for col in self.generic_tabu_edges if col in self.features]
         self.regressor = DAGRegressor(threshold=0.0,
-                                      alpha=0.0,
+                                      alpha=0.0001,
                                       beta=0.5,
                                       fit_intercept=True,
                                       hidden_layer_units=[5],
