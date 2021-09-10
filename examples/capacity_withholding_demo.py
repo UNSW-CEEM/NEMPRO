@@ -1,8 +1,7 @@
 import pandas as pd
-from NEMPRO import historical_inputs, planner
+from NEMPRO import planner, units, historical_inputs
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import math
 
 raw_data_cache = 'E:/nem_data'
 
@@ -45,16 +44,25 @@ forward_data = demand_data.copy()
 forward_data['interval'] = demand_data.index
 forward_data['hour'] = forward_data['SETTLEMENTDATE'].dt.hour
 forward_data = forward_data.drop(columns=['SETTLEMENTDATE'])
-forward_data['nsw-energy-fleet-dispatch'] = 0.0
-
 
 historical_data = historical_data[(historical_data['nsw-energy'] < 300.0) &
                                   (historical_data['nsw-energy'] > 0.0)]
 
-f = planner.Forecaster()
-f.train(historical_data, train_sample_fraction=0.1, target_col='nsw-energy')
-forecast = f.price_forecast(forward_data, region='nsw', market='nsw-energy', min_delta=0, max_delta=6000,
-                            steps=6)
+p = planner.DispatchPlanner(dispatch_interval=5, historical_data=historical_data, forward_data=forward_data,
+                            demand_delta_steps=50)
+
+u = units.GenericUnit(p, initial_dispatch=0.0)
+u.set_service_region('energy', 'nsw')
+u.add_to_market_energy_flow(capacity=10000.0)
+u.add_primary_energy_source(capacity=10000.0, cost=50.0)
+
+p.add_regional_market('nsw', 'energy')
+
+p.optimise()
+
+dispatch = u.get_dispatch()
+
+forecast = p.nominal_price_forecast['nsw-energy']
 
 price_data = historical_inputs.get_regional_prices(start_time_forward_data,
                                                    end_time_forward_data,
@@ -65,7 +73,7 @@ price_data['interval'] = price_data.index
 fig = make_subplots(specs=[[{"secondary_y": True}]])
 fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[0], name='forecast'))
 fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[1000], name='forecast-1000'))
-fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[6000], name='forecast-6000'))
+fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[10000], name='forecast-6000'))
 fig.add_trace(go.Scatter(x=price_data['interval'], y=price_data['nsw-energy'], name='hist'))
-fig.add_trace(go.Scatter(x=demand_data.index, y=demand_data['nsw-demand'], name='hist'), secondary_y=True)
-fig.write_html('forecast.html', auto_open=True)
+fig.add_trace(go.Scatter(x=dispatch.index, y=dispatch['net_dispatch'], name='hist'), secondary_y=True)
+fig.write_html('capacity_witholding_demo.html', auto_open=True)

@@ -329,7 +329,7 @@ def test_shutdown_ramp_down_constraint():
     u.set_service_region('energy', 'nsw')
     u.add_to_market_energy_flow(100.0)
     u.add_primary_energy_source(100.0, cost=300.0)
-    u.add_unit_minimum_operating_level(min_loading=50.0, shutdown_ramp_rate=99.0, start_up_ramp_rate=100.0,
+    u.add_unit_minimum_operating_level(min_loading=50.0, shutdown_ramp_rate=99.0 / 60, start_up_ramp_rate=100.0 / 60,
                                        min_up_time=60, min_down_time=60, time_in_initial_state=60)
 
     p.add_regional_market('nsw', 'energy')
@@ -357,7 +357,7 @@ def test_startup_ramp_up_constraint():
     u.set_service_region('energy', 'nsw')
     u.add_to_market_energy_flow(100.0)
     u.add_primary_energy_source(100.0, cost=50.0)
-    u.add_unit_minimum_operating_level(min_loading=50.0, shutdown_ramp_rate=99.0, start_up_ramp_rate=99.0,
+    u.add_unit_minimum_operating_level(min_loading=50.0, shutdown_ramp_rate=99.0 / 60, start_up_ramp_rate=99.0 / 60,
                                        min_up_time=60, min_down_time=60, time_in_initial_state=60)
 
     p.add_regional_market('nsw', 'energy')
@@ -385,7 +385,7 @@ def test_startup_ramp_up_shutdown_ramp_down_constraint():
     u.set_service_region('energy', 'nsw')
     u.add_to_market_energy_flow(100.0)
     u.add_primary_energy_source(100.0, cost=50.0)
-    u.add_unit_minimum_operating_level(min_loading=50.0, shutdown_ramp_rate=80.0, start_up_ramp_rate=99.0,
+    u.add_unit_minimum_operating_level(min_loading=50.0, shutdown_ramp_rate=80.0 / 60, start_up_ramp_rate=99.0 / 60,
                                        min_up_time=60, min_down_time=60, time_in_initial_state=60)
 
     p.add_regional_market('nsw', 'energy')
