@@ -8,6 +8,29 @@ aemo_price_names = {'energy': 'RRP',
                     'raise_5_minute': 'RAISE5MINRRP'}
 
 
+def get_model_training_data(start_time, end_time, region, raw_data_cache):
+    price_data = get_regional_prices(start_time, end_time, raw_data_cache)
+    price_data = price_data.loc[:, ['SETTLEMENTDATE', '{}-energy'.format(region)]]
+    demand_data = get_residual_demand(start_time, end_time, raw_data_cache)
+    historical_data = pd.merge(price_data, demand_data, on='SETTLEMENTDATE')
+    historical_data = historical_data.reset_index(drop=True)
+    historical_data['interval'] = historical_data.index
+    historical_data['hour'] = historical_data['SETTLEMENTDATE'].dt.hour
+    historical_data = historical_data.drop(columns=['SETTLEMENTDATE'])
+    return historical_data
+
+
+def get_forward_data_for_forecast(start_time, end_time, raw_data_cache):
+    demand_data = get_residual_demand(start_time, end_time, raw_data_cache)
+    demand_data = demand_data.sort_values('SETTLEMENTDATE')
+    demand_data = demand_data.reset_index(drop=True)
+    forward_data = demand_data.copy()
+    forward_data['interval'] = demand_data.index
+    forward_data['hour'] = forward_data['SETTLEMENTDATE'].dt.hour
+    forward_data = forward_data.drop(columns=['SETTLEMENTDATE'])
+    return forward_data
+
+
 def get_regional_prices(start_time, end_time, raw_data_cache):
 
     dispatch_data = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCHPRICE', raw_data_cache,

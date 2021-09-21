@@ -143,17 +143,17 @@ class DispatchPlanner:
         forecaster.train(data=historical_data, train_sample_fraction=self.train_pct, target_col=target_column_name)
 
         if service == 'energy':
-            price_traces = forecaster.price_forecast(forward_data=forward_data, region=region,
-                                                     market=target_column_name,
-                                                     min_delta=-self._get_market_out_flow_capacity(region, service),
-                                                     max_delta=self._get_market_in_flow_capacity(region, service),
-                                                     steps=self.demand_delta_steps)
+            price_traces = forecaster.price_forecast_with_demand_sensitivities(forward_data=forward_data, region=region,
+                                                                               market=target_column_name,
+                                                                               min_delta=-self._get_market_out_flow_capacity(region, service),
+                                                                               max_delta=self._get_market_in_flow_capacity(region, service),
+                                                                               steps=self.demand_delta_steps)
         else:
-            price_traces = forecaster.price_forecast(forward_data=forward_data, region=region,
-                                                     market=target_column_name,
-                                                     min_delta=0,
-                                                     max_delta=self._get_market_fcas_capacity(region, service),
-                                                     steps=self.demand_delta_steps)
+            price_traces = forecaster.price_forecast_with_demand_sensitivities(forward_data=forward_data, region=region,
+                                                                               market=target_column_name,
+                                                                               min_delta=0,
+                                                                               max_delta=self._get_market_fcas_capacity(region, service),
+                                                                               steps=self.demand_delta_steps)
 
         self.nominal_price_forecast[target_column_name] = price_traces.copy()
 
@@ -206,7 +206,7 @@ class DispatchPlanner:
         forward_data = forward_data.drop(columns=cols_to_drop)
 
         forecaster.train(data=historical_data, train_sample_fraction=0.1, target_col=target_column_name)
-        forward_dispatch = forecaster.base_forecast(forward_data=forward_data)
+        forward_dispatch = forecaster.single_trace_forecast(forward_data=forward_data)
 
         return forward_dispatch
 
@@ -405,9 +405,7 @@ def _process_row(price_forecast, self_dispatch_forecast, capacity_min, capacity_
 
 class Forecaster:
     def __init__(self, tabu_child_nodes=['hour', 'dayofweak', 'dayofyear'],
-                 tabu_edges=[('constraint', 'demand'), ('demand', 'demand'),
-                             ('constraint', 'constraint'), ('capacity', 'capacity'),
-                             ('capacity', 'demand'), ('demand', 'capacity')]):
+                 tabu_edges=[('demand', 'demand')]):
         self.generic_tabu_child_nodes = tabu_child_nodes
         self.generic_tabu_edges = tabu_edges
 
@@ -462,7 +460,7 @@ class Forecaster:
         X, y = train.loc[:, self.features], np.asarray(train[target_col])
         self.regressor.fit(X, y)
 
-    def price_forecast(self, forward_data, region, market, min_delta, max_delta, steps):
+    def price_forecast_with_demand_sensitivities(self, forward_data, region, market, min_delta, max_delta, steps):
         prediction = forward_data.loc[:, ['interval']]
         forward_data['old_demand'] = forward_data[region + '-demand'] + forward_data[market + '-fleet-dispatch']
         delta_step_size = max(int((max_delta - min_delta) / steps), 1)
@@ -473,7 +471,7 @@ class Forecaster:
             prediction[delta] = Y
         return prediction
 
-    def base_forecast(self, forward_data):
+    def single_trace_forecast(self, forward_data):
         prediction = forward_data.loc[:, ['interval']]
         X = forward_data.loc[:, self.features]
         Y = self.regressor.predict(X)
