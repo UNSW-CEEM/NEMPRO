@@ -462,9 +462,14 @@ class Forecaster:
 
     def price_forecast_with_demand_sensitivities(self, forward_data, region, market, min_delta, max_delta, steps):
         prediction = forward_data.loc[:, ['interval']]
-        forward_data['old_demand'] = forward_data[region + '-demand'] + forward_data[market + '-fleet-dispatch']
+
+        if market + '-fleet-dispatch' in forward_data.columns:
+            forward_data['old_demand'] = forward_data[region + '-demand'] + forward_data[market + '-fleet-dispatch']
+        else:
+            forward_data['old_demand'] = forward_data[region + '-demand']
+
         delta_step_size = max(int((max_delta - min_delta) / steps), 1)
-        for delta in range(int(min_delta), int(max_delta) + delta_step_size * 2, delta_step_size):
+        for delta in range(int(min_delta), int(max_delta) + delta_step_size, delta_step_size):
             forward_data[region + '-demand'] = forward_data['old_demand'] - delta
             X = forward_data.loc[:, self.features]
             Y = self.regressor.predict(X)
