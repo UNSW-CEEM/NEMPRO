@@ -36,8 +36,8 @@ def run_forecast_and_plot_comparison_to_historical(
     # Train forecasting model and run forecast
     f = planner.Forecaster()
     f.train(training_data, train_sample_fraction=0.1, target_col='nsw-energy')
-    forecast = f.price_forecast_with_demand_sensitivities(forward_data, region='nsw', market='energy', min_delta=-1000,
-                                                          max_delta=1000, steps=2)
+    forecast = f.price_forecast_with_generation_sensitivities(forward_data, region='nsw', market='energy', min_delta=-1000,
+                                                              max_delta=1000, steps=2)
 
     # Get actual historical price data for forecast period.
     price_data = historical_inputs.get_regional_prices(start_time_forward_data,
@@ -48,8 +48,8 @@ def run_forecast_and_plot_comparison_to_historical(
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[0], name='forecast'))
-    fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[-1000], name='forecast plus 1 GW demand'))
-    fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[1000], name='forecast minus 1 GW demand'))
+    fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[-1000], name='forecast minus 1 GW generation'))
+    fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[1000], name='forecast plus 1 GW generation'))
     fig.add_trace(go.Scatter(x=price_data['interval'], y=price_data['nsw-energy'], name='historical'))
     fig.write_html('forecast.html', auto_open=True)
 

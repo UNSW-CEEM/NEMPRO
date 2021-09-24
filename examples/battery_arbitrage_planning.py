@@ -31,6 +31,18 @@ forward_data = historical_inputs.get_forward_data_for_forecast(start_time=start_
                                                                raw_data_cache=raw_data_cache)
 
 
+# Get price forecast traces with sensitivities for different fleet generation levels.
+f = planner.Forecaster()
+f.train(training_data, train_sample_fraction=0.1, target_col='nsw-energy')
+price_forecast = f.price_forecast_with_generation_sensitivities(
+    forward_data, region='nsw', market='energy', min_delta=-1000, max_delta=1000, steps=40)
+
+
+# Extract just the baseline forecast for running the price taker assumption optimisation.
+baseline_forecast = price_forecast.loc[:, ['interval', 0]]
+baseline_forecast.columns = ['interval', 'nsw-energy']
+
+
 # Get historical price data for forecast period.
 price_data = historical_inputs.get_regional_prices(start_time_forward_data,
                                                    end_time_forward_data,
@@ -41,7 +53,7 @@ price_data['interval'] = price_data.index
 
 # Do dispatch planning assuming price taker assumption. Planner uses actual historical price data and assumes
 # fleet dispatch does not impact price.
-price_taker_planner = planner.DispatchPlanner(dispatch_interval=5, forward_data=price_data)
+price_taker_planner = planner.DispatchPlanner(dispatch_interval=5, planning_horizon=len(forward_data.index))
 
 # Add unit commitment model to dispatch planner
 battery_storage = units.GenericUnit(price_taker_planner, initial_dispatch=0.0)
@@ -51,15 +63,14 @@ battery_storage.add_from_market_energy_flow(capacity=1000.0)
 battery_storage.add_storage(mwh=4000.0, initial_mwh=2000.0, output_capacity=1000.0, input_capacity=1000.0,
                             output_efficiency=0.9, input_efficiency=0.9)
 
-price_taker_planner.add_regional_market('nsw', 'energy')
+price_taker_planner.add_regional_market('nsw', 'energy', forecast=baseline_forecast)
 price_taker_planner.optimise()
 
 price_taker_dispatch = battery_storage.get_dispatch()
 
 # Do dispatch planning without assuming price taker assumption. Planner uses a forecasting model to estimate the impact
 # dispatch will have on price.
-price_impact_planner = planner.DispatchPlanner(dispatch_interval=5, historical_data=training_data,
-                                               forward_data=forward_data, demand_delta_steps=30)
+price_impact_planner = planner.DispatchPlanner(dispatch_interval=5, planning_horizon=len(forward_data.index))
 
 # Add unit commitment model to dispatch planner
 battery_storage = units.GenericUnit(price_impact_planner, initial_dispatch=0.0)
@@ -69,17 +80,15 @@ battery_storage.add_from_market_energy_flow(capacity=1000.0)
 battery_storage.add_storage(mwh=4000.0, initial_mwh=2000.0, output_capacity=1000.0, input_capacity=1000.0,
                             output_efficiency=0.9, input_efficiency=0.9)
 
-price_impact_planner.add_regional_market('nsw', 'energy')
+price_impact_planner.add_regional_market('nsw', 'energy', forecast=price_forecast)
 price_impact_planner.optimise()
 
 price_impact_dispatch = battery_storage.get_dispatch()
 
-forecast = price_impact_planner.nominal_price_forecast['nsw-energy']
-
-
 # Plot a comparison of dispatch planning with and without the price taker assumption.
 fig = make_subplots(specs=[[{"secondary_y": True}]])
-fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[-10], name='Base case price impact planner forecast'))
+fig.add_trace(go.Scatter(x=price_forecast['interval'], y=price_forecast[0],
+                         name='Base case price impact planner forecast'))
 fig.add_trace(go.Scatter(x=price_data['interval'], y=price_data['nsw-energy'], name='Historical price'))
 fig.add_trace(go.Scatter(x=price_taker_dispatch.index, y=price_taker_dispatch['net_dispatch'],
                          name='Dispatch with price taker planning'), secondary_y=True)

@@ -7,16 +7,13 @@ from causalnex.structure.pytorch import DAGRegressor
 
 
 class DispatchPlanner:
-    def __init__(self, dispatch_interval, forward_data, historical_data=None, train_pct=0.1, demand_delta_steps=10):
+    def __init__(self, dispatch_interval, planning_horizon):
         self.dispatch_interval = dispatch_interval
-        self.historical_data = historical_data
-        self.forward_data = forward_data
-        self.planning_horizon = len(self.forward_data.index)
+        self.planning_horizon = planning_horizon
         self.regional_markets = []
         self.price_traces_by_market = {}
         self.units = []
         self.unit_energy_market_mapping = {}
-        self.unit_fcas_market_mapping = {}
         self.model = Model(solver_name='CBC', sense='MAX')
         self.unit_in_flow_variables = {}
         self.unit_out_flow_variables = {}
@@ -28,24 +25,19 @@ class DispatchPlanner:
         self.unit_storage_mwh = {}
         self.unit_storage_initial_mwh = {}
         self.unit_storage_level_variables = {}
-        self.unit_output_fcas_variables = {}
-        self.unit_input_fcas_variables = {}
         self.unit_initial_mw = {}
         self.market_dispatch_variables = {}
         self.market_net_dispatch_variables = {}
         self.nominal_price_forecast = {}
-        self.train_pct = train_pct
-        self.demand_delta_steps = demand_delta_steps
         self.expected_regions = ['qld', 'nsw', 'vic', 'sa', 'tas', 'mainland']
-        self.expected_service = ['energy',
-                                 'raise_5_minute', 'raise_60_second', 'raise_6_second', 'raise_regulation',
-                                 'lower_5_minute', 'lower_60_second', 'lower_6_second', 'lower_regulation']
+        self.expected_service = ['energy']
         self.unit_commitment_vars = {}
         self.unit_capacity = {}
         self.unit_min_loading = {}
         self.unit_min_down_time = {}
         self.unit_initial_state = {}
         self.unit_initial_down_time = {}
+        self.forecast = None
 
     def get_model(self):
         return self.model
@@ -59,13 +51,14 @@ class DispatchPlanner:
     def get_time_step(self):
         return self.dispatch_interval
 
-    def add_regional_market(self, region, service):
-        if self.historical_data is not None:
-            self._add_elastic_price_regional_market(region, service)
+    def add_regional_market(self, region, service, forecast):
+        self.forecast = forecast
+        if len(forecast.columns) > 2:
+            self._add_elastic_price_regional_market(region, service, forecast)
         else:
-            self._add_fixed_price_regional_market(region, service)
+            self._add_fixed_price_regional_market(region, service, forecast)
 
-    def _add_fixed_price_regional_market(self, region, service):
+    def _add_fixed_price_regional_market(self, region, service, forecast):
         market_name = region + '-' + service
         self.regional_markets.append(market_name)
 
@@ -73,7 +66,7 @@ class DispatchPlanner:
             self.market_net_dispatch_variables[region] = {}
         self.market_net_dispatch_variables[region][service] = {}
 
-        forward_prices = self.forward_data.set_index('interval')
+        forward_prices = forecast.set_index('interval')
         forward_prices = forward_prices[market_name]
 
         for i in range(0, self.planning_horizon):
@@ -81,15 +74,14 @@ class DispatchPlanner:
             self.market_net_dispatch_variables[region][service][i] = \
                 self.model.add_var(name=dispatch_var_name, lb=-1.0 * INF, ub=INF, obj=forward_prices[i])
 
-    def _add_elastic_price_regional_market(self, region, service):
+    def _add_elastic_price_regional_market(self, region, service, forward_price_traces):
+        forward_price_traces = forward_price_traces.sort_values('interval')
+
         market_name = region + '-' + service
         self.regional_markets.append(market_name)
 
-        forward_dispatch = self._get_forward_dispatch_trace(region, service, self.forward_data)
-        forward_data = pd.merge(self.forward_data, forward_dispatch, on='interval')
-
         positive_rate, positive_dispatch, negative_rate, negative_dispatch = \
-            self._marginal_market_trade(region, service, forward_data)
+            self._marginal_market_trade(forward_price_traces)
 
         if region not in self.market_dispatch_variables:
             self.market_dispatch_variables[region] = {}
@@ -125,96 +117,15 @@ class DispatchPlanner:
             self.model += xsum([-1 * self.market_net_dispatch_variables[region][service][i]] + positive_vars +
                                [-1 * var for var in negative_vars]) == 0.0
 
-    def _get_revenue_traces(self, region, service, forward_data):
-        target_column_name = region + '-' + service
-
-        forecaster = Forecaster()
-
-        cols_to_drop = []
-        for region_option, service_option in product(self.expected_regions, self.expected_service):
-            col = region_option + '-' + service_option
-            if col != target_column_name and col in self.historical_data.columns:
-                cols_to_drop.append(col)
-
-        historical_data = self.historical_data.drop(columns=cols_to_drop)
-        cols_to_drop = [col for col in cols_to_drop if col in forward_data.columns]
-        forward_data = forward_data.drop(columns=cols_to_drop)
-
-        forecaster.train(data=historical_data, train_sample_fraction=self.train_pct, target_col=target_column_name)
-
-        if service == 'energy':
-            price_traces = forecaster.price_forecast_with_demand_sensitivities(forward_data=forward_data, region=region,
-                                                                               market=target_column_name,
-                                                                               min_delta=-self._get_market_out_flow_capacity(region, service),
-                                                                               max_delta=self._get_market_in_flow_capacity(region, service),
-                                                                               steps=self.demand_delta_steps)
-        else:
-            price_traces = forecaster.price_forecast_with_demand_sensitivities(forward_data=forward_data, region=region,
-                                                                               market=target_column_name,
-                                                                               min_delta=0,
-                                                                               max_delta=self._get_market_fcas_capacity(region, service),
-                                                                               steps=self.demand_delta_steps)
-
-        self.nominal_price_forecast[target_column_name] = price_traces.copy()
-
+    @staticmethod
+    def _get_revenue_traces(price_traces):
         for col in price_traces.columns:
             if col != 'interval':
                 price_traces[col] = price_traces[col] * (col + 0.00001)
         return price_traces
 
-    def _get_market_in_flow_capacity(self, region, service):
-        capacity = 0.0
-        for unit in self.units:
-            if unit.service_region_mapping[service] == region and unit.capacity is not None:
-                capacity += unit.capacity
-        return capacity
-
-    def _get_market_out_flow_capacity(self, region, service):
-        capacity = 0.0
-        for unit in self.units:
-            if unit.service_region_mapping[service] == region:
-                if 'market_to_unit' in unit.in_flow_vars:
-                    capacity += unit.in_flow_vars['market_to_unit'][0].ub
-        return capacity
-
-    def _get_market_fcas_capacity(self, region, service):
-        capacity = 0.0
-        for unit in self.units:
-            if service in unit.service_region_mapping and unit.service_region_mapping[service] == region:
-                if service in unit.input_fcas_variables:
-                    capacity += unit.input_fcas_variables[service][0].ub
-                if service in unit.output_fcas_variables:
-                    capacity += unit.output_fcas_variables[service][0].ub
-        return capacity
-
-    def _get_forward_dispatch_trace(self, region, service, forward_data):
-        target_column_name = region + '-' + service + '-fleet-dispatch'
-
-        forecaster = Forecaster()
-
-        cols_to_drop = []
-        for region_option, service_option in product(self.expected_regions, self.expected_service):
-            col = region_option + '-' + service_option
-            if col in self.historical_data.columns:
-                cols_to_drop.append(col)
-            col = region_option + '-' + service_option + '-fleet-dispatch'
-            if col in self.historical_data.columns and col != target_column_name:
-                cols_to_drop.append(col)
-
-        historical_data = self.historical_data.drop(columns=cols_to_drop)
-        cols_to_drop = [col for col in cols_to_drop if col in forward_data.columns]
-        forward_data = forward_data.drop(columns=cols_to_drop)
-
-        forecaster.train(data=historical_data, train_sample_fraction=0.1, target_col=target_column_name)
-        forward_dispatch = forecaster.single_trace_forecast(forward_data=forward_data)
-
-        return forward_dispatch
-
-    def get_nominal_price_forecast(self, region, service):
-        return self.nominal_price_forecast[region + '-' + service]
-
-    def _marginal_market_trade(self, region, service, forward_data):
-        revenue_trace = self._get_revenue_traces(region, service, forward_data)
+    def _marginal_market_trade(self, price_traces):
+        revenue_trace = self._get_revenue_traces(price_traces)
         value_columns = [col for col in revenue_trace.columns if col != 'interval']
         stacked = pd.melt(revenue_trace, id_vars=['interval'], value_vars=value_columns,
                           var_name='dispatch', value_name='revenue')
@@ -298,14 +209,14 @@ class DispatchPlanner:
         return trace
 
     def get_market_dispatch(self, market):
-        trace = self.forward_data.loc[:, ['interval']]
+        trace = self.forecast.loc[:, ['interval']]
         trace['dispatch'] = \
             trace['interval'].apply(lambda x: self.model.var_by_name(str("net_dispatch_{}_{}".format(market, x))).x,
                                     self.model)
         return trace
 
     def get_fcas_dispatch(self, unit_name):
-        trace = self.forward_data.loc[:, ['interval']]
+        trace = self.forecast.loc[:, ['interval']]
         for service in self.expected_service:
             if service in self.unit_output_fcas_variables[unit_name] and service != 'energy':
                 trace[service] = \
@@ -314,7 +225,7 @@ class DispatchPlanner:
         return trace
 
     def get_template_trace(self):
-        return self.forward_data.loc[:, ['interval']]
+        return self.forecast.loc[:, ['interval']]
 
 
 def _create_dispatch_dependent_price_traces(price_forecast, self_dispatch_forecast, capacity_min, capacity_max,
@@ -449,18 +360,20 @@ class Forecaster:
                                       alpha=0.0001,
                                       beta=0.5,
                                       fit_intercept=True,
-                                      hidden_layer_units=[5],
+                                      hidden_layer_units=[10],
                                       standardize=True,
-                                      tabu_child_nodes=tabu_child_nodes,
-                                      tabu_edges=self._expand_tabu_edges(self.features))
+                                      #tabu_child_nodes=tabu_child_nodes,
+                                      #tabu_edges=self._expand_tabu_edges(self.features)
+                                      )
         n_rows = len(data.index)
         sample_size = int(n_rows * train_sample_fraction)
-        train = data.sample(sample_size, random_state=1)
+        #train = data.sample(sample_size, random_state=1)
+        train = data
         train = train.reset_index(drop=True)
         X, y = train.loc[:, self.features], np.asarray(train[target_col])
         self.regressor.fit(X, y)
 
-    def price_forecast_with_demand_sensitivities(self, forward_data, region, market, min_delta, max_delta, steps):
+    def price_forecast_with_generation_sensitivities(self, forward_data, region, market, min_delta, max_delta, steps):
         prediction = forward_data.loc[:, ['interval']]
 
         if market + '-fleet-dispatch' in forward_data.columns:
