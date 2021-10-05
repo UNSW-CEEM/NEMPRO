@@ -73,4 +73,5 @@ fig.add_trace(go.Scatter(x=dispatch_plan['SETTLEMENTDATE'], y=dispatch_plan['net
 fig.update_xaxes(title="Time")
 fig.update_yaxes(title="Price ($/MWh)", secondary_y=False)
 fig.update_yaxes(title="Dispatch (MW)", secondary_y=True)
-fig.write_html('battery_arbitrage_planning.html', auto_open=True)
+fig.write_html('images/battery_arbitrage_planning_1000MW.html', auto_open=True)
+fig.write_image('images/battery_arbitrage_planning_1000MW.png')

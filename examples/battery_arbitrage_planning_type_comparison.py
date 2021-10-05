@@ -94,4 +94,4 @@ fig.add_trace(go.Scatter(x=price_taker_dispatch.index, y=price_taker_dispatch['n
                          name='Dispatch with price taker planning'), secondary_y=True)
 fig.add_trace(go.Scatter(x=price_impact_dispatch.index, y=price_impact_dispatch['net_dispatch'],
                          name='Dispatch with price impact planning'), secondary_y=True)
-fig.write_html('battery_arbitrage_planning.html', auto_open=True)
+fig.write_html('images/battery_arbitrage_planning.html', auto_open=True)
