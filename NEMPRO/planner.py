@@ -362,13 +362,12 @@ class Forecaster:
                                       fit_intercept=True,
                                       hidden_layer_units=[10],
                                       standardize=True,
-                                      #tabu_child_nodes=tabu_child_nodes,
-                                      #tabu_edges=self._expand_tabu_edges(self.features)
+                                      tabu_child_nodes=tabu_child_nodes,
+                                      tabu_edges=self._expand_tabu_edges(self.features)
                                       )
         n_rows = len(data.index)
         sample_size = int(n_rows * train_sample_fraction)
-        #train = data.sample(sample_size, random_state=1)
-        train = data
+        train = data.sample(sample_size, random_state=1)
         train = train.reset_index(drop=True)
         X, y = train.loc[:, self.features], np.asarray(train[target_col])
         self.regressor.fit(X, y)
