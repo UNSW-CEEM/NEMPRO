@@ -287,49 +287,6 @@ class GenericUnit:
 
             self.unit_commitment_vars['startup_status'][i].obj = -cold_start_cost
 
-    def add_regulation_service_to_output(self, service, availability, ramp_rate, fcas_trapezium=None):
-        capacity = self.out_flow_vars['unit_to_market'][0].ub
-        self.output_fcas_variables[service] = {}
-        for i in range(0, self.planning_horizon_in_intervals):
-            self.output_fcas_variables[service][i] = self.model.add_var(ub=availability)
-
-        self.add_joint_ramping_constraints_to_output(service, ramp_rate)
-
-        if fcas_trapezium is not None:
-            self.add_capacity_constraints_on_output(service=service, max_available=availability,
-                                                    enablement_min=fcas_trapezium['enablement_min'],
-                                                    low_breakpoint=fcas_trapezium['low_breakpoint'],
-                                                    high_breakpoint=fcas_trapezium['high_breakpoint'],
-                                                    enablement_max=fcas_trapezium['enablement_max'])
-
-        elif 'raise' in service:
-            self.add_capacity_constraints_on_output(service=service, max_available=availability,
-                                                    enablement_min=0.0, low_breakpoint=0.0,
-                                                    high_breakpoint=capacity - availability, enablement_max=capacity)
-        elif 'lower' in service:
-            self.add_capacity_constraints_on_output(service=service, max_available=availability, enablement_min=0.0,
-                                                    low_breakpoint=availability, high_breakpoint=capacity,
-                                                    enablement_max=capacity)
-
-    def add_joint_ramping_constraints_to_output(self, service, ramp_rate):
-
-        for i in range(0, self.planning_horizon_in_intervals):
-
-            if i == 0:
-                previous_energy_dispatch_target = self.initial_mw
-            else:
-                previous_energy_dispatch_target = self.out_flow_vars["unit_to_market"][i - 1]
-
-            energy_dispatch_target = self.out_flow_vars["unit_to_market"][i]
-            fcas_regulation_target = self.output_fcas_variables[service][i]
-
-            if 'raise' in service:
-                self.model += energy_dispatch_target + fcas_regulation_target - previous_energy_dispatch_target \
-                              <= ramp_rate * (self.time_step / 60)
-
-            elif 'lower' in service:
-                self.model += energy_dispatch_target - fcas_regulation_target - previous_energy_dispatch_target \
-                              >= - ramp_rate * (self.time_step / 60)
 
     def add_capacity_constraints_on_output(self, service, max_available, enablement_min,
                                            low_breakpoint, high_breakpoint, enablement_max):
@@ -348,30 +305,6 @@ class GenericUnit:
                 self.model += energy_dispatch_target - lower_slope_coefficient * fcas_contingency_target \
                               >= enablement_min
 
-    def add_regulation_service_to_input(self, service, availability, ramp_rate, fcas_trapezium=None):
-        capacity = self.in_flow_vars['market_to_unit'][0].ub
-        self.input_fcas_variables[service] = {}
-        for i in range(0, self.planning_horizon_in_intervals):
-            self.input_fcas_variables[service][i] = self.model.add_var(ub=availability)
-
-        self.add_joint_ramping_constraints_to_input(service, ramp_rate)
-
-        if fcas_trapezium is not None:
-            self.add_capacity_constraints_on_input(service=service, max_available=availability,
-                                                   enablement_min=fcas_trapezium['enablement_min'],
-                                                   low_breakpoint=fcas_trapezium['low_breakpoint'],
-                                                   high_breakpoint=fcas_trapezium['high_breakpoint'],
-                                                   enablement_max=fcas_trapezium['enablement_max'])
-
-        elif 'raise' in service:
-            self.add_capacity_constraints_on_input(service=service, max_available=availability, enablement_min=0.0,
-                                                   low_breakpoint=availability, high_breakpoint=capacity,
-                                                   enablement_max=capacity)
-        elif 'lower' in service:
-            self.add_capacity_constraints_on_input(service=service, max_available=availability, enablement_min=0.0,
-                                                   low_breakpoint=0.0, high_breakpoint=capacity - availability,
-                                                   enablement_max=capacity)
-
     def add_capacity_constraints_on_input(self, service, max_available, enablement_min,
                                           low_breakpoint, high_breakpoint, enablement_max):
 
@@ -388,124 +321,6 @@ class GenericUnit:
 
                 self.model += energy_dispatch_target - lower_slope_coefficient * fcas_contingency_target \
                               >= enablement_min
-
-    def add_joint_ramping_constraints_to_input(self, service, ramp_rate):
-
-        for i in range(0, self.planning_horizon_in_intervals):
-
-            if i == 0:
-                previous_energy_dispatch_target = self.initial_mw
-            else:
-                previous_energy_dispatch_target = self.in_flow_vars["market_to_unit"][i - 1]
-
-            energy_dispatch_target = self.in_flow_vars["market_to_unit"][i]
-            fcas_regulation_target = self.input_fcas_variables[service][i]
-
-            if 'raise' in service:
-                self.model += energy_dispatch_target - fcas_regulation_target - previous_energy_dispatch_target \
-                              >= - ramp_rate * (self.time_step / 60)
-
-            elif 'lower' in service:
-                self.model += energy_dispatch_target + fcas_regulation_target - previous_energy_dispatch_target \
-                              <= ramp_rate * (self.time_step / 60)
-
-    def add_contingency_service_to_output(self, service, availability, fcas_trapezium=None):
-        capacity = self.out_flow_vars['unit_to_market'][0].ub
-        self.output_fcas_variables[service] = {}
-        for i in range(0, self.planning_horizon_in_intervals):
-            self.output_fcas_variables[service][i] = self.model.add_var(ub=availability)
-
-        if fcas_trapezium is not None:
-            self.add_joint_capacity_constraints_on_output(service=service, max_available=availability,
-                                                          enablement_min=fcas_trapezium['enablement_min'],
-                                                          low_breakpoint=fcas_trapezium['low_breakpoint'],
-                                                          high_breakpoint=fcas_trapezium['high_breakpoint'],
-                                                          enablement_max=fcas_trapezium['enablement_max'])
-        elif 'raise' in service:
-            self.add_joint_capacity_constraints_on_output(service=service, max_available=availability,
-                                                          enablement_min=0.0, low_breakpoint=0.0,
-                                                          high_breakpoint=capacity - availability,
-                                                          enablement_max=capacity)
-        elif 'lower' in service:
-            self.add_joint_capacity_constraints_on_output(service=service, max_available=availability,
-                                                          enablement_min=0.0, low_breakpoint=availability,
-                                                          high_breakpoint=capacity, enablement_max=capacity)
-
-    def add_contingency_service_to_input(self, service, availability, fcas_trapezium=None):
-        capacity = self.in_flow_vars['market_to_unit'][0].ub
-        self.input_fcas_variables[service] = {}
-        for i in range(0, self.planning_horizon_in_intervals):
-            self.input_fcas_variables[service][i] = self.model.add_var(ub=availability)
-
-        if fcas_trapezium is not None:
-            self.add_joint_capacity_constraints_on_input(service=service, max_available=availability,
-                                                         enablement_min=fcas_trapezium['enablement_min'],
-                                                         low_breakpoint=fcas_trapezium['low_breakpoint'],
-                                                         high_breakpoint=fcas_trapezium['high_breakpoint'],
-                                                         enablement_max=fcas_trapezium['enablement_max'])
-        elif 'raise' in service:
-            self.add_joint_capacity_constraints_on_input(service=service, max_available=availability,
-                                                         enablement_min=0.0, low_breakpoint=availability,
-                                                         high_breakpoint=capacity, enablement_max=capacity)
-        elif 'lower' in service:
-            self.add_joint_capacity_constraints_on_input(service=service, max_available=availability,
-                                                         enablement_min=0.0, low_breakpoint=0.0,
-                                                         high_breakpoint=capacity - availability,
-                                                         enablement_max=capacity)
-
-    def add_joint_capacity_constraints_on_output(self, service, max_available, enablement_min,
-                                                 low_breakpoint, high_breakpoint, enablement_max):
-
-        if 'unit_to_market' in self.out_flow_vars:
-            upper_slope_coefficient = (enablement_max - high_breakpoint) / max_available
-            lower_slope_coefficient = (low_breakpoint - enablement_min) / max_available
-
-            for i in range(0, self.planning_horizon_in_intervals):
-                energy_dispatch_target = self.out_flow_vars["unit_to_market"][i]
-                fcas_contingency_target = self.output_fcas_variables[service][i]
-
-                if 'raise_regulation' in self.output_fcas_variables:
-                    raise_regulation_target = self.output_fcas_variables['raise_regulation'][i]
-                    self.model += energy_dispatch_target + upper_slope_coefficient * fcas_contingency_target + \
-                                  raise_regulation_target <= enablement_max
-                else:
-                    self.model += energy_dispatch_target + upper_slope_coefficient * fcas_contingency_target \
-                                  <= enablement_max
-
-                if 'lower_regulation' in self.output_fcas_variables:
-                    lower_regulation_target = self.output_fcas_variables['lower_regulation'][i]
-                    self.model += energy_dispatch_target - lower_slope_coefficient * fcas_contingency_target - \
-                                  lower_regulation_target >= enablement_min
-                else:
-                    self.model += energy_dispatch_target - lower_slope_coefficient * fcas_contingency_target \
-                                  >= enablement_min
-
-    def add_joint_capacity_constraints_on_input(self, service, max_available, enablement_min,
-                                                low_breakpoint, high_breakpoint, enablement_max):
-
-        if 'market_to_unit' in self.in_flow_vars:
-            upper_slope_coefficient = (enablement_max - high_breakpoint) / max_available
-            lower_slope_coefficient = (low_breakpoint - enablement_min) / max_available
-
-            for i in range(0, self.planning_horizon_in_intervals):
-                energy_dispatch_target = self.in_flow_vars["market_to_unit"][i]
-                fcas_contingency_target = self.input_fcas_variables[service][i]
-
-                if 'lower_regulation' in self.input_fcas_variables:
-                    lower_regulation_target = self.input_fcas_variables['lower_regulation'][i]
-                    self.model += energy_dispatch_target + upper_slope_coefficient * fcas_contingency_target + \
-                                  lower_regulation_target <= enablement_max
-                else:
-                    self.model += energy_dispatch_target + upper_slope_coefficient * fcas_contingency_target \
-                                  <= enablement_max
-
-                if 'raise_regulation' in self.input_fcas_variables:
-                    raise_regulation_target = self.input_fcas_variables['raise_regulation'][i]
-                    self.model += energy_dispatch_target - lower_slope_coefficient * fcas_contingency_target - \
-                                  raise_regulation_target >= enablement_min
-                else:
-                    self.model += energy_dispatch_target - lower_slope_coefficient * fcas_contingency_target \
-                                  >= enablement_min
 
     def add_storage(self, mwh, initial_mwh, output_capacity, output_efficiency,
                     input_capacity, input_efficiency):

@@ -2,6 +2,7 @@ from NEMPRO import historical_inputs, planner
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
+import pandas as pd
 
 
 def run_forecast_and_plot_comparison_to_historical(
@@ -46,11 +47,15 @@ def run_forecast_and_plot_comparison_to_historical(
     price_data = price_data.reset_index(drop=True)
     price_data['interval'] = price_data.index
 
+    forecast = pd.merge(forecast, price_data.loc[:, ['interval', 'SETTLEMENTDATE']], on='interval')
+
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[0], name='forecast'))
-    fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[-1000], name='forecast minus 1 GW generation'))
-    fig.add_trace(go.Scatter(x=forecast['interval'], y=forecast[1000], name='forecast plus 1 GW generation'))
-    fig.add_trace(go.Scatter(x=price_data['interval'], y=price_data['nsw-energy'], name='historical'))
+    fig.add_trace(go.Scatter(x=price_data['SETTLEMENTDATE'], y=price_data['nsw-energy'], name='Historical prices'))
+    fig.add_trace(go.Scatter(x=forecast['SETTLEMENTDATE'], y=forecast[0], name='Forecast prices'))
+    fig.add_trace(go.Scatter(x=forecast['SETTLEMENTDATE'], y=forecast[-1000], name='Forecast minus 1 GW generation'))
+    fig.add_trace(go.Scatter(x=forecast['SETTLEMENTDATE'], y=forecast[1000], name='Forecast plus 1 GW generation'))
+    fig.update_xaxes(title="Time")
+    fig.update_yaxes(title="Price ($/MWh)")
     fig.write_html('forecast.html', auto_open=True)
 
 
