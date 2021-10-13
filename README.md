@@ -16,7 +16,7 @@ documentation and user support features that you would expect in production soft
 ## Architecture
 The functionality of NEMPRO is/will be devided into three core components: 1) a forecasting module that generates the 
 baseline prices forecasts and senstivity forecasts that estimate the impact of additional generation on prices, 2) a 
-planning module uses the forecasts to omptimse the dispatch plan of given portfolio of generation assests, and 3) a 
+planning module that uses the forecasts to optimse the dispatch plan of a given portfolio of generation assests, and 3) a 
 bidding module that transaltes the dispatch plan into a set of bids. While working proto types of the forecasting and 
 planning modules have been developed, work on the bidding module hasn't started.
 
