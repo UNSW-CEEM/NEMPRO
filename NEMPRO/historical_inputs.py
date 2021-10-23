@@ -138,28 +138,24 @@ def get_fleet_dispatch(start_time, end_time, fleet_units, region, raw_data_cache
 
     dispatch_data = data_fetch_methods.dynamic_data_compiler(start_time, end_time, 'DISPATCHLOAD', raw_data_cache,
                                                              select_columns=['DUID', 'SETTLEMENTDATE', 'TOTALCLEARED',
-                                                                             'INTERVENTION', 'RAISEREG', 'RAISE6SEC',
-                                                                             'RAISE60SEC', 'RAISE5MIN'])
+                                                                             'INTERVENTION'])
     dispatch_data = dispatch_data[dispatch_data['INTERVENTION'] == 0]
 
     dispatch_data = dispatch_data[dispatch_data['DUID'].isin(fleet_units)]
 
     dispatch_data['TOTALCLEARED'] = pd.to_numeric(dispatch_data['TOTALCLEARED'])
-    dispatch_data['RAISEREG'] = pd.to_numeric(dispatch_data['RAISEREG'])
-    dispatch_data['RAISE6SEC'] = pd.to_numeric(dispatch_data['RAISE6SEC'])
-    dispatch_data['RAISE60SEC'] = pd.to_numeric(dispatch_data['RAISE60SEC'])
-    dispatch_data['RAISE5MIN'] = pd.to_numeric(dispatch_data['RAISE5MIN'])
 
     dispatch_data = dispatch_data.groupby('SETTLEMENTDATE', as_index=False).aggregate(
-        {'TOTALCLEARED': 'sum', 'RAISEREG': 'sum', 'RAISE6SEC': 'sum', 'RAISE60SEC': 'sum', 'RAISE5MIN': 'sum'})
+        {'TOTALCLEARED': 'sum'})
 
-    aemo_dispatch_names = {'TOTALCLEARED': region + '-energy-fleet-dispatch',
-                           'RAISEREG': region + '-raise_regulation-fleet-dispatch',
-                           'RAISE6SEC': region + '-raise_6_second-fleet-dispatch',
-                           'RAISE60SEC': region + '-raise_60_second-fleet-dispatch',
-                           'RAISE5MIN': region + '-raise_5_minute-fleet-dispatch'}
+    aemo_dispatch_names = {'TOTALCLEARED': region + '-energy-fleet-dispatch'}
 
     dispatch_data = dispatch_data.rename(columns=aemo_dispatch_names)
+
+    dispatch_data = dispatch_data.sort_values('SETTLEMENTDATE')
+    dispatch_data = dispatch_data.reset_index(drop=True)
+    dispatch_data = dispatch_data.drop(columns=['SETTLEMENTDATE'])
+    dispatch_data['interval'] = dispatch_data.index
 
     return dispatch_data
 

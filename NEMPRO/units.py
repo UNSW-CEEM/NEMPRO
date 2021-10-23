@@ -70,6 +70,11 @@ class GenericUnit:
     def set_service_region(self, service, region):
         self.service_region_mapping[service] = region
 
+    def add_unit_hard_minimum_operating_level(self, min_loading):
+        self.min_loading = min_loading
+        for i in range(0, self.planning_horizon_in_intervals):
+            self.out_flow_vars['unit_to_market'][i].lb = min_loading
+
     def add_unit_minimum_operating_level(self, min_loading, shutdown_ramp_rate, start_up_ramp_rate,
                                          min_up_time, min_down_time, time_in_initial_state):
         """Unit commitment constraints are the Tight formulation from Knueven et al. On Mixed Integer Programming

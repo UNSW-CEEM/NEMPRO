@@ -30,12 +30,13 @@ Formulations for Unit Commitment.
 ## Examples
 
 ### Battery arbitrage
-A simple example to demonstrate NEMPRO is the case of planning a dispatch schedule for a large battery. In the first 
+A simple example to demonstrate NEMPRO is planning a dispatch schedule for a large battery. In the first 
 chart below the dispatch plan for a 1000 MW battery with 4 h of storage is shown. The code for example is here:
 https://github.com/UNSW-CEEM/NEMPRO/blob/master/examples/battery_arbitrage_planning.py. The plan optimiser discharges
-at time of high price, and recharges at times of low price. However to minimise the impact of dispatch on price, and
+at times of high prices, and charges at times of low prices. However to minimise the impact of dispatch on price, and
 maximise net revenue the optimiser does not always charge and discharge at full power, but spreads out charging and 
-discharging more evenly. The second chart shows the same example but for 3000 MW battery with 4 h of storage.
+discharging more evenly. The second chart shows the same example but for 3000 MW battery with 4 h of storage, in this 
+case the battery uses a lower percentage of its peak capacity and further spreads out charging and discharging.
 
 |![Figure1](/examples/images/battery_arbitrage_planning_1000MW.png)|
 |:--:|
@@ -44,3 +45,6 @@ discharging more evenly. The second chart shows the same example but for 3000 MW
 |![Figure2](/examples/images/battery_arbitrage_planning_3000MW.png)|
 |:--:|
 |Dispatch plan for a 3000 MW battery with 4 h of storage|
+
+### CS Energy
+In this example we attempt to recreate the historical behaviour of CS energy 

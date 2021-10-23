@@ -6,7 +6,9 @@ import pandas as pd
 
 
 def run_forecast_and_plot_comparison_to_historical(
-        start_time, training_peroid_length_weeks, forecast_length_weeks, raw_data_cache):
+        start_time, training_peroid_length_weeks, forecast_length_weeks, raw_data_cache, region):
+
+    price_column = '{}-energy'.format(region)
 
     # Build data set for calibrating the dispatch planner's price forecasting model.
     end_time_training = start_time
@@ -16,13 +18,13 @@ def run_forecast_and_plot_comparison_to_historical(
 
     training_data = historical_inputs.get_model_training_data(start_time=start_time_training,
                                                               end_time=end_time_training,
-                                                              region='nsw',
+                                                              region=region,
                                                               raw_data_cache=raw_data_cache)
 
     # Exclude high price events to improve model performance. Note the column nsw-energy refers to the spot price
     # for energy in the nsw region.
-    training_data = training_data[(training_data['nsw-energy'] < 300.0) &
-                                  (training_data['nsw-energy'] > 0.0)]
+    training_data = training_data[(training_data[price_column] < 300.0) &
+                                  (training_data[price_column] > 0.0)]
 
     # Build data set for running the dispatch planner's price forecasting model.
     start_time_forward_data = start_time
@@ -36,8 +38,8 @@ def run_forecast_and_plot_comparison_to_historical(
 
     # Train forecasting model and run forecast
     f = planner.Forecaster()
-    f.train(training_data, train_sample_fraction=0.1, target_col='nsw-energy')
-    forecast = f.price_forecast_with_generation_sensitivities(forward_data, region='nsw', market='energy', min_delta=-1000,
+    f.train(training_data, train_sample_fraction=0.5, target_col=price_column)
+    forecast = f.price_forecast_with_generation_sensitivities(forward_data, region=region, market='energy', min_delta=-1000,
                                                               max_delta=1000, steps=2)
 
     # Get actual historical price data for forecast period.
@@ -59,13 +61,16 @@ def run_forecast_and_plot_comparison_to_historical(
     fig.write_html('forecast.html', auto_open=True)
 
 
-raw_data_cache = 'E:/nem_data'
+raw_data_directory = 'E:/nem_data'
 
 run_forecast_and_plot_comparison_to_historical(start_time='2020/01/07 00:00:00', training_peroid_length_weeks=4,
-                                               forecast_length_weeks=1, raw_data_cache=raw_data_cache)
+                                               forecast_length_weeks=1, raw_data_cache=raw_data_directory, region='qld')
+run_forecast_and_plot_comparison_to_historical(start_time='2020/02/07 00:00:00', training_peroid_length_weeks=4,
+                                               forecast_length_weeks=1, raw_data_cache=raw_data_directory, region='nsw')
 run_forecast_and_plot_comparison_to_historical(start_time='2020/04/07 00:00:00', training_peroid_length_weeks=4,
-                                               forecast_length_weeks=1, raw_data_cache=raw_data_cache)
+                                               forecast_length_weeks=1, raw_data_cache=raw_data_directory, region='vic')
 run_forecast_and_plot_comparison_to_historical(start_time='2020/06/07 00:00:00', training_peroid_length_weeks=4,
-                                               forecast_length_weeks=1, raw_data_cache=raw_data_cache)
-run_forecast_and_plot_comparison_to_historical(start_time='2020/09/07 00:00:00', training_peroid_length_weeks=4,
-                                               forecast_length_weeks=1, raw_data_cache=raw_data_cache)
+                                               forecast_length_weeks=1, raw_data_cache=raw_data_directory, region='sa')
+run_forecast_and_plot_comparison_to_historical(start_time='2020/08/07 00:00:00', training_peroid_length_weeks=4,
+                                               forecast_length_weeks=1, raw_data_cache=raw_data_directory, region='tas')
+

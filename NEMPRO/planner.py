@@ -373,6 +373,8 @@ class Forecaster:
         self.regressor.fit(X, y)
 
     def price_forecast_with_generation_sensitivities(self, forward_data, region, market, min_delta, max_delta, steps):
+        forward_data = forward_data.copy()
+
         prediction = forward_data.loc[:, ['interval']]
 
         if market + '-fleet-dispatch' in forward_data.columns:
